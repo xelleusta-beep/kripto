@@ -34,7 +34,6 @@ chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="Useri
 st.sidebar.markdown("---")
 st.sidebar.header("🔍 2. Kripto Seçimi & Backtest Ayarları")
 
-# GENİŞLETİLMİŞ KRİPTO PARA LİSTESİ (40 Popüler Varlık)
 crypto_list = [
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT", 
     "ADA/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
@@ -200,21 +199,20 @@ else:
             st.write("##### 🛠️ Detaylı Backtest İstatistikleri")
             stats_df = pd.DataFrame(portfolio.stats(), columns=["Değer"]).astype(str)
             st.dataframe(stats_df, width="stretch")
-
-    with tab2:
-        st.write("### 🗃️ Tanımlı Yapay Zeka Alarmlarınız ve Canlı Bakiyeleri")
+            
+        st.markdown("---")
+        st.write("### 📜 Yapay Zekanın Geçmiş Tüm İşlemlerinin Detaylı Listesi (Trade Logs)")
         
-        if not st.session_state.alarms:
-            st.info("Havuzda aktif alarm bulunmuyor. Yan taraftan parametre seçip listeye ekleyebilirsiniz.")
-        else:
-            for idx, alm in enumerate(st.session_state.alarms):
-                c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-                c1.write(f"**#{alm['id']}**")
-                c2.write(f"💱 {alm['ticker']}")
-                c3.write(f"⏱️ {alm['interval']}")
+        # YENİ ÖZELLİK: Vectorbt içerisinden işlem dökümlerini çekme
+        try:
+            trades_df = portfolio.trades.records_df
+            if not trades_df.empty:
+                # İndeksleri gerçek tarih formatına dönüştürme ve anlaşılır kılma
+                trades_df['Giriş Tarihi'] = df.index[trades_df['entry_idx']]
+                trades_df['Çıkış Tarihi'] = df.index[trades_df['exit_idx']]
                 
-                live_val = alm['balance'] if alm['balance'] > 0 else (alm['crypto_amount'] * alm['last_price'])
-                c4.write(f"💰 Kasa: **${live_val:,.2f}**")
-                
-                if alm['last_signal'] == 1:
-                    c5.success("🤖 Sinyal: AL")
+                # Sütunları Türkçeleştirme ve düzenleme
+                backtest_logs = pd.DataFrame({
+                    "İşlem ID": trades_df['id'] + 1,
+                    "Giriş Tarihi": trades_df['Giriş Tarihi'].dt.strftime('%Y-%m-%d %H:%M'),
+                    "Çıkış Tarihi": trades_df['Çıkış Tarihi'].dt.strftime('%Y-%m-%d %H:%M'),
