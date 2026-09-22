@@ -16,16 +16,24 @@ st.write(f"### {ticker} Verileri ve Yapay Zeka Analizi")
 
 # 3. Arka Plan: Veri Çekme (Simüle edilmiş veri, CCXT ile borsadan da çekilebilir)
 # Gerçek senaryoda buraya veri çekme fonksiyonu eklenir.
-data = vbt.YFData.download(ticker.replace("/", "-"), period="1y").get('Close')
-df = pd.DataFrame(data, columns=['Close'])
+# 3. Arka Plan: Veri Çekme (Yahoo Finance için Ticker formatı düzeltildi)
+symbol = ticker.replace("/", "-")
+if "USDT" in symbol:
+    symbol = symbol.replace("USDT", "USD") # Yahoo Finance BTC-USD kullanır
+
+# Veriyi indir ve sadece kapanış fiyatını (Close) temiz bir Seri olarak al
+data = vbt.YFData.download(symbol, period="1y").get('Close')
+
+# Eğer veri çok katmanlı geldiyse tek boyuta indirge
+if isinstance(data, pd.DataFrame):
+    data = data.iloc[:, 0]
+
+df = pd.DataFrame({'Close': data})
 
 # Feature Engineering (Özellik Çıkarımı)
 df['Return'] = df['Close'].pct_change()
 df['Signal_Target'] = (df['Return'].shift(-1) > 0).astype(int) # Yarın fiyat artacak mı?
 df.dropna(inplace=True)
-
-# 4. Arka Plan: Makine Öğrenimi Modeli Eğitme
-X = df[['Return']] # Basitlik adına sadece bugünkü getiriyi girdi yapıyoruz
 y = df['Signal_Target']
 
 model = RandomForestClassifier()
