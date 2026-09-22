@@ -117,7 +117,7 @@ try:
     # Vectorbt Backtest Hesaplaması
     portfolio = vbt.Portfolio.from_signals(df['Close'], entries=(df['Predicted_Signal'] == 1), exits=(df['Predicted_Signal'] == 0), fees=0.001)
 
-    # --- 3 ANA ANA SEKMELİ ÖN YÜZ TASARIMI ---
+    # --- 3 ANA SEKMELİ ÖN YÜZ TASARIMI ---
     tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
     with tab1:
@@ -209,6 +209,7 @@ try:
                     st.rerun()
             
             st.markdown("---")
-            # Excel İşlemleri
-            report_data = [{
-                "ID": a["id"], "Kripto": a["ticker"], "Sıklık": a["interval"], "Test Süresi": a["period"],
+            
+            # --- SYNTAX HATASI DÜZELTİLEN YENİ RAPORLAMA ALANI ---
+            report_data = []
+            for a in st.session_state.alarms:
