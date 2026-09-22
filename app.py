@@ -8,7 +8,7 @@ import warnings
 from streamlit_autorefresh import st_autorefresh
 warnings.filterwarnings('ignore')
 
-# Sayfa ayarları - İlk satırda olmalıdır
+# Sayfa ayarları - Kodun en üstünde olmalıdır
 st.set_page_config(layout="wide", page_title="Yapay Zeka Çoklu Otomasyon Paneli")
 
 # 60 saniyede bir sayfayı otomatik yeniler (Canlı alarmların arka planda çalışması için)
@@ -20,7 +20,7 @@ if "alarms" not in st.session_state:
 if "global_trade_history" not in st.session_state:
     st.session_state.global_trade_history = []
 
-# --- 1. TELEGRAM BİLDİRİM FONKSİYONU ---
+# --- 1. TELEGRAM BİLDİRİM FONKSiyonu ---
 def send_telegram_signal(token, chat_id, message):
     if not token or not chat_id:
         return False
@@ -72,7 +72,7 @@ def compute_strategy_performance(df_input, train_ratio):
         working_df = df_input.copy()
         working_df['Return'] = working_df['Close'].pct_change()
         
-        # vectorbt yerine saf matematiksel hesaplama
+        # Saf matematiksel indikatör hesaplama
         working_df['RSI'] = compute_rsi(working_df['Close'], 14)
         working_df['SMA_20'] = working_df['Close'].rolling(window=20).mean()
         
