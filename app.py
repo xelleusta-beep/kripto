@@ -60,4 +60,18 @@ with col1:
 
 with col2:
     st.write("#### Backtest Performans Sonuçları")
-    st.dataframe(portfolio.total_return())
+    
+    # Toplam getiriyi hesapla ve yüzde formatına çevir
+    total_ret = portfolio.total_return() * 100
+    
+    # Sonucu ekranda güzel bir metrik kutusu olarak göster
+    st.metric(
+        label="Strateji Toplam Getiri (%)", 
+        value=f"{total_ret:.2f}%",
+        delta=f"{total_ret:.2f}%" if total_ret > 0 else f"{total_ret:.2f}%"
+    )
+    
+    # Detaylı tüm istatistikleri (Sharpe, Max Drawdown vb.) tablo olarak görmek isterseniz:
+    st.write("##### Detaylı Strateji İstatistikleri")
+    stats_df = pd.DataFrame(portfolio.stats(), columns=["Değer"])
+    st.dataframe(stats_df)
