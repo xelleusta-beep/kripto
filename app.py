@@ -257,7 +257,39 @@ crypto_list = [
     "DOGE/USDT", "SHIB/USDT", "NEAR/USDT", "SUI/USDT", "LTC/USDT"
 ]
 
-ticker = st.sidebar.selectbox("Kripto Para Seçin (MEXC Canlı)", crypto_list)
+if "custom_cryptos" not in st.session_state:
+    st.session_state.custom_cryptos = []
+
+ticker = st.sidebar.selectbox("Kripto Para Seçin (MEXC Canlı)", crypto_list + st.session_state.custom_cryptos)
+
+st.sidebar.markdown("**➕ Özel Kripto Ekle**")
+custom_input = st.sidebar.text_input("Parite Girin (örn: PEPE/USDT)", key="custom_crypto")
+
+def mexc_symbol_exists(symbol):
+    try:
+        exchange = ccxt.mexc({'enableRateLimit': True})
+        markets = exchange.load_markets()
+        return symbol in markets
+    except Exception:
+        return False
+
+if custom_input:
+    normalized = custom_input.strip().upper()
+    if "/" not in normalized:
+        normalized = normalized + "/USDT"
+    exists = mexc_symbol_exists(normalized)
+    if exists:
+        st.sidebar.success(f"✅ {normalized} MEXC'de mevcut")
+    else:
+        st.sidebar.error(f"❌ {normalized} MEXC'de bulunamadı")
+
+    if exists and normalized not in crypto_list and normalized not in st.session_state.custom_cryptos:
+        if st.sidebar.button(f"➕ {normalized} Listeye Ekle", width="stretch"):
+            st.session_state.custom_cryptos.append(normalized)
+            st.rerun()
+    elif normalized in crypto_list or normalized in st.session_state.custom_cryptos:
+        st.sidebar.info(f"ℹ️ {normalized} zaten listede")
+
 interval_label = st.sidebar.selectbox("Veri Sıklığı (Grafik Mum Tipi)", ["1 Saat", "1 Gün"])
 
 interval_mapping = {"1 Saat": "1h", "1 Gün": "1d"}
