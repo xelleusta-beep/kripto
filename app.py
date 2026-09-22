@@ -6,27 +6,26 @@ import requests
 import io
 from sklearn.ensemble import RandomForestClassifier
 
-# 1. Web Sayfası Başlığı ve Geniş Ekran Ayarı
+# 1. Sayfa Konfigürasyonu
 st.set_page_config(layout="wide", page_title="Yapay Zeka Çoklu Otomasyon Paneli")
 st.title("🤖 ML Kripto Backtest & Çoklu Canlı Alarm Yönetim Platformu")
 
-# --- INITIAL SESSIONS (Oturum Belleği) ---
+# --- OTURUM BELLEĞİ (SESSION STATE) ---
 if "alarms" not in st.session_state:
     st.session_state.alarms = [] 
 if "global_trade_history" not in st.session_state:
     st.session_state.global_trade_history = []
 
-# --- FONKSİYON 1: TELEGRAM SİNYAL GÖNDERME ---
+# --- YARDIMCI FONKSİYONLAR ---
 def send_telegram_signal(token, chat_id, message):
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
         response = requests.post(url, json=payload, timeout=5)
         return response.status_code == 200
-    except Exception:
+    except:
         return False
 
-# --- FONKSİYON 2: GÜVENLİ VERİ ÇEKME ---
 def get_crypto_data(symbol_name, prd, inv):
     try:
         yf_data = vbt.YFData.download(symbol_name, period=prd, interval=inv)
@@ -40,10 +39,9 @@ def get_crypto_data(symbol_name, prd, inv):
             if isinstance(res_df[col], pd.DataFrame):
                 res_df[col] = res_df[col].iloc[:, 0]
         return res_df
-    except Exception:
+    except:
         return pd.DataFrame()
 
-# --- FONKSİYON 3: MAKİNE ÖĞRENİMİ VE BACKTEST MOTORU ---
 def run_ml_and_backtest(df_input, train_ratio):
     try:
         working_df = df_input.copy()
@@ -55,7 +53,7 @@ def run_ml_and_backtest(df_input, train_ratio):
         working_df.dropna(inplace=True)
 
         if len(working_df) < 10:
-            return None, None, None
+            return None, None
 
         X = working_df[['Return', 'RSI', 'Price_to_SMA']]
         y = working_df['Signal_Target']
@@ -72,14 +70,14 @@ def run_ml_and_backtest(df_input, train_ratio):
             exits=(working_df['Predicted_Signal'] == 0), 
             fees=0.001
         )
-        return working_df, portfolio, model
-    except Exception:
-        return None, None, None
+        return working_df, portfolio
+    except:
+        return None, None
 
-# 2. Yan Panel (Sidebar) - Kullanıcı Seçimleri ve Zaman Ayarları
+# 2. Yan Panel (Sidebar) Ayarları
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
-bot_token = st.sidebar.text_input("Telegram Bot Token", type="password", help="BotFather'dan aldığınız token")
-chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="Userinfo botundan aldığınız ID")
+bot_token = st.sidebar.text_input("Telegram Bot Token", type="password")
+chat_id = st.sidebar.text_input("Telegram Chat ID", type="password")
 
 st.sidebar.markdown("---")
 st.sidebar.header("🔍 2. Kripto Seçimi & Backtest Ayarları")
@@ -137,13 +135,12 @@ symbol = ticker.replace("/", "-").replace("USDT", "USD")
 raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
 
 if raw_df.empty or len(raw_df) < 20:
-    st.error("Seçili zaman aralığında borsa verisi yüklenemedi. Lütfen yan panelden zaman ayarlarını değiştirin.")
+    st.error("Seçili borsa verisi yüklenemedi. Lütfen zaman ayarlarını değiştirin.")
 else:
-    processed_df, portfolio, model_obj = run_ml_and_backtest(raw_df, train_size)
+    processed_df, portfolio = run_ml_and_backtest(raw_df, train_size)
     
-    if processed_df is None:
-        st.error("Yapay zeka modeli eğitilirken veri hatası oluştu.")
-    else:
+    if processed_df is not None and portfolio is not None:
+        
         # --- CANLI ALARMLARI GÜNCELLEME DÖNGÜSÜ ---
         for alarm in st.session_state.alarms:
             if not alarm["is_active"]:
@@ -153,33 +150,30 @@ else:
             alarm_raw = get_crypto_data(alm_symbol, period_mapping[alarm["period"]], interval_mapping[alarm["interval"]])
             
             if not alarm_raw.empty and len(alarm_raw) > 20:
-                try:
-                    a_proc, a_port, _ = run_ml_and_backtest(alarm_raw, 80)
-                    if a_proc is not None:
-                        a_price = float(a_proc['Close'].iloc[-1])
-                        a_signal = int(a_proc['Predicted_Signal'].iloc[-1])
-                        alarm["last_price"] = a_price
+                a_proc, _ = run_ml_and_backtest(alarm_raw, 80)
+                if a_proc is not None:
+                    a_price = float(a_proc['Close'].iloc[-1])
+                    a_signal = int(a_proc['Predicted_Signal'].iloc[-1])
+                    alarm["last_price"] = a_price
+                    
+                    if alarm["last_signal"] != a_signal:
+                        action = ""
+                        if a_signal == 1 and alarm["balance"] > 0:
+                            alarm["crypto_amount"] = alarm["balance"] / a_price
+                            action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
+                            alarm["balance"] = 0.0
+                        elif a_signal == 0 and alarm["crypto_amount"] > 0:
+                            alarm["balance"] = alarm["crypto_amount"] * a_price
+                            action = f"🔴 SATIM YAPILDI: Nakte geçildi."
+                            alarm["crypto_amount"] = 0.0
                         
-                        if alarm["last_signal"] != a_signal:
-                            action = ""
-                            if a_signal == 1 and alarm["balance"] > 0:
-                                alarm["crypto_amount"] = alarm["balance"] / a_price
-                                action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
-                                alarm["balance"] = 0.0
-                            elif a_signal == 0 and alarm["crypto_amount"] > 0:
-                                alarm["balance"] = alarm["crypto_amount"] * a_price
-                                action = f"🔴 SATIM YAPILDI: Nakte geçildi."
-                                alarm["crypto_amount"] = 0.0
-                            
-                            alarm["last_signal"] = a_signal
-                            
-                            if action and bot_token and chat_id:
-                                cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
-                                msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
-                                send_telegram_signal(bot_token, chat_id, msg)
-                                st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
-                except Exception:
-                    pass
+                        alarm["last_signal"] = a_signal
+                        
+                        if action and bot_token and chat_id:
+                            cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
+                            msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
+                            send_telegram_signal(bot_token, chat_id, msg)
+                            st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
 
         # --- SEKMELİ ÖN YÜZ TASARIMI ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
@@ -208,9 +202,15 @@ else:
             st.markdown("---")
             st.write("### 📜 Yapay Zekanın Geçmiş Tüm İşlemlerinin Detaylı Listesi (Trade Logs)")
             
-            try:
-                trades_df = portfolio.trades.records_df
-                if not trades_df.empty:
-                    entry_dates = processed_df.index[trades_df['entry_idx']]
-                    exit_dates = processed_df.index[trades_df['exit_idx']]
-                    
+            trades_df = portfolio.trades.records_df
+            if not trades_df.empty:
+                entry_dates = processed_df.index[trades_df['entry_idx']]
+                exit_dates = processed_df.index[trades_df['exit_idx']]
+                
+                backtest_logs = pd.DataFrame()
+                backtest_logs["İşlem ID"] = trades_df['id'] + 1
+                backtest_logs["Giriş Tarihi"] = entry_dates.strftime('%Y-%m-%d %H:%M')
+                backtest_logs["Çıkış Tarihi"] = exit_dates.strftime('%Y-%m-%d %H:%M')
+                backtest_logs["Giriş Fiyatı ($)"] = trades_df['entry_price'].round(4)
+                backtest_logs["Çıkış Fiyatı ($)"] = trades_df['exit_price'].round(4)
+                backtest_logs["Miktar (Adet)"] = trades_df['size'].round(6)
