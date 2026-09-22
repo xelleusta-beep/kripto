@@ -83,7 +83,7 @@ with col1:
         name=ticker
     )])
     fig.update_layout(xaxis_rangeslider_visible=False, height=500, template="plotly_dark")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 with col2:
     st.write("#### 📊 Strateji Performans Raporu")
@@ -99,4 +99,4 @@ with col2:
     st.write("##### 🛠️ Detaylı Finansal İstatistikler")
     # vectorbt çıktılarını tabloya dönüştürüp Arrow hatasını engelliyoruz
     stats_df = pd.DataFrame(portfolio.stats(), columns=["Değer"]).astype(str)
-    st.dataframe(stats_df, use_container_width=True)
+    st.dataframe(stats_df, width="stretch")
