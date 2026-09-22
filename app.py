@@ -110,6 +110,23 @@ def compute_strategy_performance(df_input, train_ratio):
     except:
         return None, 0.0, 10000.0, pd.DataFrame(), 0
 
+# --- 4. HATA VEREN GRAFİK OLUŞTURMA İŞLEMİNİ FONKSİYONA HAPSETTİK ---
+def build_candlestick_chart(data_df, label_text):
+    try:
+        candles = go.Candlestick(
+            x=data_df.index, 
+            open=data_df['Open'], 
+            high=data_df['High'], 
+            low=data_df['Low'], 
+            close=data_df['Close'], 
+            name=label_text
+        )
+        fig_obj = go.Figure(data=[candles])
+        fig_obj.update_layout(xaxis_rangeslider_visible=False, height=450, template="plotly_dark")
+        return fig_obj
+    except:
+        return None
+
 # 2. Yan Panel (Sidebar) Parametreleri
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
 bot_token = st.sidebar.text_input("Telegram Bot Token", type="password")
@@ -173,7 +190,6 @@ raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[i
 if raw_df.empty or len(raw_df) < 20:
     st.error("Seçili borsa verisi yüklenemedi. Lütfen yan panelden zaman ayarlarını değiştirin.")
 else:
-    # Tüm hesaplamaları izole motorda çalıştırıyoruz
     processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
     
     if processed_df is not None:
@@ -209,15 +225,3 @@ else:
                             cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
                             msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
                             send_telegram_signal(bot_token, chat_id, msg)
-                            st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
-                except:
-                    pass
-
-        # --- SEKMELİ ÖN YÜZ TASARIMI ---
-        tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
-
-        with tab1:
-            st.write(f"### 📈 {ticker} Strateji Analiz Paneli")
-            
-            st.write("#### 🕯️ İnteraktif Mum Grafiği")
-            fig = go.Figure(data=[go.Candlestick(
