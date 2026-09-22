@@ -26,7 +26,7 @@ def send_telegram_signal(token, chat_id, message):
     except Exception:
         return False
 
-# 2. Yan Panel (Sidebar) - Kullanıcı Seçimleri ve Zaman Ayarları
+# 2. Yan Panel (Sidebar) - Kullanıcı Seçimleri ver Zaman Ayarları
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
 bot_token = st.sidebar.text_input("Telegram Bot Token", type="password", help="BotFather'dan aldığınız token")
 chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="Userinfo botundan aldığınız ID")
@@ -34,7 +34,6 @@ chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="Useri
 st.sidebar.markdown("---")
 st.sidebar.header("🔍 2. Kripto Seçimi & Backtest Ayarları")
 
-# Genişletilmiş Kripto Para Listesi
 ticker = st.sidebar.selectbox(
     "Kripto Para Seçin", 
     ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "AVAX/USDT", "LINK/USDT", "BNB/USDT", "ADA/USDT"]
@@ -45,7 +44,6 @@ interval_label = st.sidebar.selectbox(
     ["1 Dakika", "5 Dakika", "15 Dakika", "1 Saat", "1 Gün"]
 )
 
-# Sıklık kısıtlama eşlemeleri
 interval_mapping = {"1 Dakika": "1m", "5 Dakika": "5m", "15 Dakika": "15m", "1 Saat": "1h", "1 Gün": "1d"}
 period_mapping = {"7 Gün": "7d", "30 Gün": "30d", "2 Ay": "2mo", "1 Yıl": "1y", "3 Yıl": "3y"}
 
@@ -65,7 +63,6 @@ st.sidebar.markdown("---")
 st.sidebar.header("🚨 3. Alarm Oluşturma")
 alarm_init_balance = st.sidebar.number_input("Bu Alarma Özel Başlangıç Bakiyesi ($)", min_value=10.0, value=1000.0, step=100.0)
 
-# Butona basıldığında mevcut seçili coini alarm listesine ekler
 if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_width=True):
     new_alarm = {
         "id": len(st.session_state.alarms) + 1,
@@ -87,7 +84,6 @@ if "USDT" in symbol:
     symbol = symbol.replace("USDT", "USD")
 
 try:
-    # Veri Çekme
     yf_data = vbt.YFData.download(symbol, period=period_mapping[time_period], interval=interval_mapping[interval_label])
     df = pd.DataFrame({'Open': yf_data.get('Open'), 'High': yf_data.get('High'), 'Low': yf_data.get('Low'), 'Close': yf_data.get('Close')})
     
@@ -95,7 +91,6 @@ try:
         if isinstance(df[col], pd.DataFrame):
             df[col] = df[col].iloc[:, 0]
 
-    # ML Şartlarının Hesaplanması (Özellik Çıkarımı)
     df['Return'] = df['Close'].pct_change()
     df['RSI'] = vbt.RSI.run(df['Close'], window=14).rsi
     df['SMA_20'] = vbt.MA.run(df['Close'], window=20).ma
@@ -103,7 +98,6 @@ try:
     df['Signal_Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
     df.dropna(inplace=True)
 
-    # ML Model Eğitimi (Random Forest)
     X = df[['Return', 'RSI', 'Price_to_SMA']]
     y = df['Signal_Target']
     model = RandomForestClassifier(random_state=42, n_estimators=100)
@@ -114,7 +108,6 @@ try:
     current_price = float(df['Close'].iloc[-1])
     latest_signal = int(df['Predicted_Signal'].iloc[-1])
 
-    # Vectorbt Backtest Hesaplaması
     portfolio = vbt.Portfolio.from_signals(df['Close'], entries=(df['Predicted_Signal'] == 1), exits=(df['Predicted_Signal'] == 0), fees=0.001)
 
     # --- 3 ANA SEKMELİ ÖN YÜZ TASARIMI ---
@@ -202,7 +195,12 @@ try:
                 c3.write(f"⏱️ {alm['interval']}")
                 live_val = alm['balance'] if alm['balance'] > 0 else (alm['crypto_amount'] * alm['last_price'])
                 c4.write(f"💰 Kasa: **${live_val:,.2f}**")
-                c5.success("🤖 Sinyal: AL") if alm['last_signal'] == 1 else c5.error("🤖 Sinyal: SAT") if alm['last_signal'] == 0 else c5.warning("⏳ Hesaplanıyor")
+                if alm['last_signal'] == 1:
+                    c5.success("🤖 Sinyal: AL")
+                elif alm['last_signal'] == 0:
+                    c5.error("🤖 Sinyal: SAT")
+                else:
+                    c5.warning("⏳ Hesaplanıyor")
                 alm["is_active"] = c6.toggle("Açık", value=alm["is_active"], key=f"tgl_{idx}")
                 if c7.button("🗑️", key=f"del_{idx}"):
                     st.session_state.alarms.pop(idx)
@@ -210,6 +208,9 @@ try:
             
             st.markdown("---")
             
-            # --- SYNTAX HATASI DÜZELTİLEN YENİ RAPORLAMA ALANI ---
+            # --- DÜZELTİLMİŞ VE HİZALANMIŞ TABLO RAPORLAMA KATMANI ---
             report_data = []
             for a in st.session_state.alarms:
+                calculated_balance = a['balance'] if a['balance'] > 0 else (a['crypto_amount'] * a['last_price'])
+                signal_status = "Belirsiz"
+                if a["last_signal"] == 1:
