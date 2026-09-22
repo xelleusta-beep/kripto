@@ -1,15 +1,18 @@
 import streamlit as st
 import pandas as pd
-import vectorbt as vbt
 import plotly.graph_objects as go
 import requests
 import io
 import ccxt
 import warnings
+from streamlit_autorefresh import st_autorefresh
 warnings.filterwarnings('ignore')
 
-# Sayfa ayarları
+# Sayfa ayarları - İlk satırda olmalıdır
 st.set_page_config(layout="wide", page_title="Yapay Zeka Çoklu Otomasyon Paneli")
+
+# 60 saniyede bir sayfayı otomatik yeniler (Canlı alarmların arka planda çalışması için)
+st_autorefresh(interval=60000, key="datarefresh")
 
 # Session State Tanımlamaları
 if "alarms" not in st.session_state:
@@ -30,17 +33,18 @@ def send_telegram_signal(token, chat_id, message):
         return False
 
 # --- 2. GÜVENLİ VERİ ÇEKME FONKSİYONU ---
+@st.cache_data(ttl=30)  # Sunucu kilitlenmelerini önlemek için 30 saniyelik önbellek
 def get_crypto_data(symbol_name, prd_days, inv_str):
     try:
         exchange = ccxt.mexc({
             'enableRateLimit': True,
-            'options': {'defaultType': 'spot'}
+            'options': {'defaultType': 'spot'},
+            'timeout': 15000
         })
         limit_mapping = {"7 Gün": 200, "30 Gün": 750, "2 Ay": 1000, "1 Yıl": 1000, "3 Yıl": 1500}
         safe_limit = limit_mapping.get(prd_days, 500)
         ohlcv = exchange.fetch_ohlcv(symbol_name, timeframe=inv_str, limit=safe_limit)
 
-        # HATA DÜZELTMESİ: ohlcv None kontrolü güvenli hale getirildi
         if ohlcv is not None and len(ohlcv) > 20:
             df_res = pd.DataFrame(ohlcv, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
             df_res['Timestamp'] = pd.to_datetime(df_res['Timestamp'], unit='ms')
@@ -48,9 +52,15 @@ def get_crypto_data(symbol_name, prd_days, inv_str):
             return df_res[['Open', 'High', 'Low', 'Close']]
         return pd.DataFrame()
     except Exception as e:
-        if "global_trade_history" in st.session_state:
-            st.session_state.global_trade_history.append(f"⚠️ Veri Çekme Hatası ({symbol_name}): {str(e)}")
         return pd.DataFrame()
+
+# --- SAF PANDAS İLE RSI HESAPLAMA (vectorbt bağımlılığı kaldırıldı) ---
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / (loss + 1e-9)
+    return 100 - (100 / (1 + rs))
 
 # --- 3. PANDAS BACKTEST MATEMATİK MOTORU ---
 def compute_strategy_performance(df_input, train_ratio):
@@ -61,8 +71,11 @@ def compute_strategy_performance(df_input, train_ratio):
         from sklearn.ensemble import RandomForestClassifier
         working_df = df_input.copy()
         working_df['Return'] = working_df['Close'].pct_change()
-        working_df['RSI'] = vbt.RSI.run(working_df['Close'], window=14).rsi
-        working_df['SMA_20'] = vbt.MA.run(working_df['Close'], window=20).ma
+        
+        # vectorbt yerine saf matematiksel hesaplama
+        working_df['RSI'] = compute_rsi(working_df['Close'], 14)
+        working_df['SMA_20'] = working_df['Close'].rolling(window=20).mean()
+        
         working_df['Price_to_SMA'] = working_df['Close'] / working_df['SMA_20']
         working_df['Signal_Target'] = (working_df['Close'].shift(-1) > working_df['Close']).astype(int)
         working_df.dropna(inplace=True)
@@ -88,7 +101,7 @@ def compute_strategy_performance(df_input, train_ratio):
         init_cash = 10000.0
         cash = init_cash
         units = 0.0
-        last_entry_cost = 0.0 # Giriş maliyetini tutmak için eklendi
+        last_entry_cost = 0.0
 
         for i in range(len(working_df)):
             c_date = working_df.index[i]
@@ -96,7 +109,7 @@ def compute_strategy_performance(df_input, train_ratio):
             c_sig = int(working_df['Predicted_Signal'].iloc[i])
 
             if c_sig == 1 and not in_pos:
-                last_entry_cost = cash # Pozisyona girerken kasadaki net para
+                last_entry_cost = cash
                 units = (cash / c_price) * 0.999
                 ent_price = c_price
                 ent_date = c_date
@@ -104,7 +117,6 @@ def compute_strategy_performance(df_input, train_ratio):
                 in_pos = True
             elif c_sig == 0 and in_pos:
                 cash = (units * c_price) * 0.999
-                # HATA DÜZELTMESİ: Matematiksel PnL hesabı düzeltildi
                 pnl = cash - last_entry_cost 
                 ret_pct = ((c_price - ent_price) / ent_price) * 100
                 trade_logs.append({
@@ -168,7 +180,7 @@ def process_live_alarms(b_token, c_id):
             continue
         try:
             res = compute_strategy_performance(alarm_raw, 80)
-            if res[0] is not None:
+            if res is not None:
                 _, _, _, _, a_signal = res
                 a_price = float(alarm_raw['Close'].iloc[-1])
                 alarm["last_price"] = a_price
@@ -220,12 +232,3 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
     if not any(a["ticker"] == ticker and a["interval"] == interval_mapping[interval_label] for a in st.session_state.alarms):
         new_alarm = {
             "id": len(st.session_state.alarms) + 1,
-            "ticker": ticker,
-            "interval": interval_mapping[interval_label],
-            "period": time_period,
-            "balance": float(alarm_init_balance),
-            "crypto_amount": 0.0,
-            "last_signal": 0,
-            "last_price": 0.0,
-            "is_active": True
-        }
