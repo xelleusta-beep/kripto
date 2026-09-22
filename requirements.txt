@@ -1,8 +1,7 @@
 streamlit
-pandas<2.2.0
-vectorbt==0.26.1
+pandas>=2.0.0,<2.2.0
 scikit-learn
 ccxt
 plotly==5.18.0
-yfinance
 openpyxl
+streamlit-autorefresh
