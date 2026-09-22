@@ -71,26 +71,35 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
         "period": time_period,
         "balance": float(alarm_init_balance),
         "crypto_amount": 0.0,
-        "is_active": True,
         "last_signal": None,
-        "last_price": 0.0
+        "last_price": 0.0,
+        "is_active": True
     }
     st.session_state.alarms.append(new_alarm)
     st.sidebar.success(f"Başarılı! {ticker} alarm havuzuna eklendi.")
 
-# --- ARKA PLAN VERİ VE ML İŞLEME ALANI ---
-symbol = ticker.replace("/", "-")
-if "USDT" in symbol:
-    symbol = symbol.replace("USDT", "USD")
+# --- DATA VERİ YÜKLEME VE HESAPLAMA FONKSİYONU ---
+def get_crypto_data(symbol_name, prd, inv):
+    try:
+        yf_data = vbt.YFData.download(symbol_name, period=prd, interval=inv)
+        res_df = pd.DataFrame({'Open': yf_data.get('Open'), 'High': yf_data.get('High'), 'Low': yf_data.get('Low'), 'Close': yf_data.get('Close')})
+        for col in res_df.columns:
+            if isinstance(res_df[col], pd.DataFrame):
+                res_df[col] = res_df[col].iloc[:, 0]
+        return res_df
+    except Exception:
+        return pd.DataFrame()
 
-try:
-    yf_data = vbt.YFData.download(symbol, period=period_mapping[time_period], interval=interval_mapping[interval_label])
-    df = pd.DataFrame({'Open': yf_data.get('Open'), 'High': yf_data.get('High'), 'Low': yf_data.get('Low'), 'Close': yf_data.get('Close')})
-    
-    for col in df.columns:
-        if isinstance(df[col], pd.DataFrame):
-            df[col] = df[col].iloc[:, 0]
+# Sembol Formatı Dönüştürme
+symbol = ticker.replace("/", "-").replace("USDT", "USD")
 
+# Veriyi Alma
+df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
+
+if df.empty or len(df) < 20:
+    st.error("Seçili zaman aralığında borsa verisi yüklenemedi. Lütfen yan panelden zaman ayarlarını değiştirin.")
+else:
+    # İndikatörler
     df['Return'] = df['Close'].pct_change()
     df['RSI'] = vbt.RSI.run(df['Close'], window=14).rsi
     df['SMA_20'] = vbt.MA.run(df['Close'], window=20).ma
@@ -98,6 +107,7 @@ try:
     df['Signal_Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
     df.dropna(inplace=True)
 
+    # ML Model Eğitimi
     X = df[['Return', 'RSI', 'Price_to_SMA']]
     y = df['Signal_Target']
     model = RandomForestClassifier(random_state=42, n_estimators=100)
@@ -108,46 +118,19 @@ try:
     current_price = float(df['Close'].iloc[-1])
     latest_signal = int(df['Predicted_Signal'].iloc[-1])
 
+    # Backtest
     portfolio = vbt.Portfolio.from_signals(df['Close'], entries=(df['Predicted_Signal'] == 1), exits=(df['Predicted_Signal'] == 0), fees=0.001)
 
-    # --- 3 ANA SEKMELİ ÖN YÜZ TASARIMI ---
-    tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
-
-    with tab1:
-        st.write(f"### 📈 {ticker} Strateji Analiz Paneli")
-        col1, col2 = st.columns(2)
+    # --- SİNYAL VE BAKİYE MOTORU (TÜM ALARMLAR İÇİN BİREYSEL ÇALIŞIR) ---
+    for alarm in st.session_state.alarms:
+        if not alarm["is_active"]:
+            continue
         
-        with col1:
-            st.write("#### 🕯️ İnteraktif Mum Grafiği")
-            fig = go.Figure(data=[go.Candlestick(
-                x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name=ticker
-            )])
-            fig.update_layout(xaxis_rangeslider_visible=False, height=450, template="plotly_dark")
-            st.plotly_chart(fig, width="stretch")
-
-        with col2:
-            st.write("#### 📊 Geçmiş Dönem Performans Sonuçları")
-            total_ret = portfolio.total_return() * 100
-            st.metric(label="Yapay Zeka Toplam Net Kâr/Zarar", value=f"{total_ret:.2f}%", delta=f"{total_ret:.2f}%")
-            
-            st.write("##### 🛠️ Detaylı Backtest İstatistikleri")
-            stats_df = pd.DataFrame(portfolio.stats(), columns=["Değer"]).astype(str)
-            st.dataframe(stats_df, width="stretch")
-
-    with tab2:
-        st.write("### 🗃️ Tanımlı Yapay Zeka Alarmlarınız ve Canlı Bakiyeleri")
+        alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
+        a_df = get_crypto_data(alm_symbol, period_mapping[alarm["period"]], interval_mapping[alarm["interval"]])
         
-        # AKTİF ALARMLARIN OTOMATİK ML MOTORU TARAFINDAN GÜNCELLENMESİ
-        for alarm in st.session_state.alarms:
-            if not alarm["is_active"]:
-                continue
-            
-            alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
+        if not a_df.empty and len(a_df) > 20:
             try:
-                a_data = vbt.YFData.download(alm_symbol, period=period_mapping[alarm["period"]], interval=interval_mapping[alarm["interval"]])
-                a_df = pd.DataFrame({'Close': a_data.get('Close')})
-                if isinstance(a_df['Close'], pd.DataFrame): a_df['Close'] = a_df['Close'].iloc[:, 0]
-                
                 a_df['Return'] = a_df['Close'].pct_change()
                 a_df['RSI'] = vbt.RSI.run(a_df['Close'], window=14).rsi
                 a_df['SMA_20'] = vbt.MA.run(a_df['Close'], window=20).ma
@@ -185,14 +168,42 @@ try:
             except Exception:
                 pass
 
+    # --- SEKMELİ ÖN YÜZ TASARIMI ---
+    tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
+
+    with tab1:
+        st.write(f"### 📈 {ticker} Strateji Analiz Paneli")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("#### 🕯️ İnteraktif Mum Grafiği")
+            fig = go.Figure(data=[go.Candlestick(
+                x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name=ticker
+            )])
+            fig.update_layout(xaxis_rangeslider_visible=False, height=450, template="plotly_dark")
+            st.plotly_chart(fig, width="stretch")
+
+        with col2:
+            st.write("#### 📊 Geçmiş Dönem Performans Sonuçları")
+            total_ret = portfolio.total_return() * 100
+            st.metric(label="Yapay Zeka Toplam Net Kâr/Zarar", value=f"{total_ret:.2f}%", delta=f"{total_ret:.2f}%")
+            
+            st.write("##### 🛠️ Detaylı Backtest İstatistikleri")
+            stats_df = pd.DataFrame(portfolio.stats(), columns=["Değer"]).astype(str)
+            st.dataframe(stats_df, width="stretch")
+
+    with tab2:
+        st.write("### 🗃️ Tanımlı Yapay Zeka Alarmlarınız ve Canlı Bakiyeleri")
+        
         if not st.session_state.alarms:
-            st.info("Havuzda alarm bulunmuyor. Yan taraftan coin seçip listeye ekleyebilirsiniz.")
+            st.info("Havuzda aktif alarm bulunmuyor. Yan taraftan parametre seçip listeye ekleyebilirsiniz.")
         else:
             for idx, alm in enumerate(st.session_state.alarms):
                 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
                 c1.write(f"**#{alm['id']}**")
                 c2.write(f"💱 {alm['ticker']}")
                 c3.write(f"⏱️ {alm['interval']}")
+                
                 live_val = alm['balance'] if alm['balance'] > 0 else (alm['crypto_amount'] * alm['last_price'])
                 c4.write(f"💰 Kasa: **${live_val:,.2f}**")
                 
@@ -210,7 +221,4 @@ try:
             
             st.markdown("---")
             
-            # --- HATALI IF ELSE BLOKLARI TEK SATIRA İNDİRGENEREK KESİN ÇÖZÜM SAĞLANDI ---
-            report_data = []
-            for a in st.session_state.alarms:
-                calculated_balance = a['balance'] if a['balance'] > 0 else (a['crypto_amount'] * a['last_price'])
+            # --- TABLO VE EXCEL RAPORLAMA KATMANI ---
