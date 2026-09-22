@@ -211,12 +211,11 @@ tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canl�
 # --- VERİ VE STRATEJİ AKIŞI (TAMAMEN DOĞRUSAL VE HİZALAMADAN BAĞIMSIZ) ---
 raw_df = get_crypto_data(ticker, time_period, interval_mapping[interval_label])
 
-# HESAPLAMALAR VE GRAFİKLER (ASLA IF-ELSE VEYA WITH BLOKLARININ İÇİNE GÖMÜLMEZ)
+# HESAPLAMALAR VE GRAFİKLER
 processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
 process_live_alarms(bot_token, chat_id)
 
 # --- SEKME 1: BACKTEST VE ANALİZ ALANI ---
 with tab1:
     st.write(f"### 📈 {ticker} MEXC Canlı Strateji Analiz Paneli")
-    
     if raw_df.empty or len(raw_df) < 10 or processed_df is None:
