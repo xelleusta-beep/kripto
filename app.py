@@ -208,14 +208,15 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
 # --- SEKMELİ ÖN YÜZ TANIMLAMASI ---
 tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
-# --- VERİ VE STRATEJİ AKIŞI (TAMAMEN DOĞRUSAL VE HİZALAMADAN BAĞIMSIZ) ---
+# --- VERİ VE STRATEJİ AKIŞI (TAMAMEN DOĞRUSAL, KOŞUL BLOKLARINDAN BAĞIMSIZ) ---
 raw_df = get_crypto_data(ticker, time_period, interval_mapping[interval_label])
 
-# HESAPLAMALAR VE GRAFİKLER
+# HESAPLAMALAR TAMAMEN BAĞIMSIZ DOĞRUSAL ALANA ALINDI
 processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
 process_live_alarms(bot_token, chat_id)
 
 # --- SEKME 1: BACKTEST VE ANALİZ ALANI ---
 with tab1:
     st.write(f"### 📈 {ticker} MEXC Canlı Strateji Analiz Paneli")
-    if raw_df.empty or len(raw_df) < 10 or processed_df is None:
+    
+    # Tüm IF-ELSE yapısını tamamen kaldırıp düz metin kontrolü yapıyoruz (Girinti hatasını sıfırlar)
