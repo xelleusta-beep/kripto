@@ -34,10 +34,19 @@ chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="Useri
 st.sidebar.markdown("---")
 st.sidebar.header("🔍 2. Kripto Seçimi & Backtest Ayarları")
 
-ticker = st.sidebar.selectbox(
-    "Kripto Para Seçin", 
-    ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "AVAX/USDT", "LINK/USDT", "BNB/USDT", "ADA/USDT"]
-)
+# GENİŞLETİLMİŞ KRİPTO PARA LİSTESİ (40 Popüler Varlık)
+crypto_list = [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT", 
+    "ADA/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
+    "DOGE/USDT", "SHIB/USDT", "PEPE/USDT", "WIF/USDT", "BONK/USDT",
+    "NEAR/USDT", "SUI/USDT", "APT/USDT", "OP/USDT", "ARB/USDT",
+    "LTC/USDT", "BCH/USDT", "UNI/USDT", "ATOM/USDT", "ICP/USDT",
+    "FIL/USDT", "RNDR/USDT", "FET/USDT", "INJ/USDT", "TIA/USDT",
+    "IMX/USDT", "STX/USDT", "GRT/USDT", "THETA/USDT", "FTM/USDT",
+    "ALGO/USDT", "VET/USDT", "EGLD/USDT", "SAND/USDT", "MANA/USDT"
+]
+
+ticker = st.sidebar.selectbox("Kripto Para Seçin", crypto_list)
 
 interval_label = st.sidebar.selectbox(
     "Veri Sıklığı (Grafik Mum Tipi)", 
@@ -209,16 +218,3 @@ else:
                 
                 if alm['last_signal'] == 1:
                     c5.success("🤖 Sinyal: AL")
-                elif alm['last_signal'] == 0:
-                    c5.error("🤖 Sinyal: SAT")
-                else:
-                    c5.warning("⏳ Hesaplanıyor")
-                    
-                alm["is_active"] = c6.toggle("Açık", value=alm["is_active"], key=f"tgl_{idx}")
-                if c7.button("🗑️", key=f"del_{idx}"):
-                    st.session_state.alarms.pop(idx)
-                    st.rerun()
-            
-            st.markdown("---")
-            
-            # --- TABLO VE EXCEL RAPORLAMA KATMANI ---
