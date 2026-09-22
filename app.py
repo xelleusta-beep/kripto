@@ -26,6 +26,23 @@ def send_telegram_signal(token, chat_id, message):
     except Exception:
         return False
 
+# --- DATA VERİ YÜKLEME VE TEMİZLEME FONKSİYONU ---
+def get_crypto_data(symbol_name, prd, inv):
+    try:
+        yf_data = vbt.YFData.download(symbol_name, period=prd, interval=inv)
+        res_df = pd.DataFrame({
+            'Open': yf_data.get('Open'), 
+            'High': yf_data.get('High'), 
+            'Low': yf_data.get('Low'), 
+            'Close': yf_data.get('Close')
+        })
+        for col in res_df.columns:
+            if isinstance(res_df[col], pd.DataFrame):
+                res_df[col] = res_df[col].iloc[:, 0]
+        return res_df
+    except Exception:
+        return pd.DataFrame()
+
 # 2. Yan Panel (Sidebar) - Kullanıcı Seçimleri ve Zaman Ayarları
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
 bot_token = st.sidebar.text_input("Telegram Bot Token", type="password", help="BotFather'dan aldığınız token")
@@ -86,28 +103,14 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
     st.session_state.alarms.append(new_alarm)
     st.sidebar.success(f"Başarılı! {ticker} alarm havuzuna eklendi.")
 
-# --- DATA VERİ YÜKLEME VE HESAPLAMA FONKSİYONU ---
-def get_crypto_data(symbol_name, prd, inv):
-    try:
-        yf_data = vbt.YFData.download(symbol_name, period=prd, interval=inv)
-        res_df = pd.DataFrame({'Open': yf_data.get('Open'), 'High': yf_data.get('High'), 'Low': yf_data.get('Low'), 'Close': yf_data.get('Close')})
-        for col in res_df.columns:
-            if isinstance(res_df[col], pd.DataFrame):
-                res_df[col] = res_df[col].iloc[:, 0]
-        return res_df
-    except Exception:
-        return pd.DataFrame()
-
-# Sembol Formatı Dönüştürme
+# --- ANA PROGRAM AKIŞI ---
 symbol = ticker.replace("/", "-").replace("USDT", "USD")
-
-# Veriyi Alma
 df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
 
 if df.empty or len(df) < 20:
     st.error("Seçili zaman aralığında borsa verisi yüklenemedi. Lütfen yan panelden zaman ayarlarını değiştirin.")
 else:
-    # İndikatörler
+    # İndikatör Hesaplama (ML Şartları)
     df['Return'] = df['Close'].pct_change()
     df['RSI'] = vbt.RSI.run(df['Close'], window=14).rsi
     df['SMA_20'] = vbt.MA.run(df['Close'], window=20).ma
@@ -115,7 +118,7 @@ else:
     df['Signal_Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
     df.dropna(inplace=True)
 
-    # ML Model Eğitimi
+    # ML Model Eğitimi (Random Forest)
     X = df[['Return', 'RSI', 'Price_to_SMA']]
     y = df['Signal_Target']
     model = RandomForestClassifier(random_state=42, n_estimators=100)
@@ -126,10 +129,10 @@ else:
     current_price = float(df['Close'].iloc[-1])
     latest_signal = int(df['Predicted_Signal'].iloc[-1])
 
-    # Backtest
+    # Vectorbt Backtest
     portfolio = vbt.Portfolio.from_signals(df['Close'], entries=(df['Predicted_Signal'] == 1), exits=(df['Predicted_Signal'] == 0), fees=0.001)
 
-    # --- SİNYAL VE BAKİYE MOTORU (TÜM ALARMLAR İÇİN BİREYSEL ÇALIŞIR) ---
+    # --- SİNYAL VE BAKİYE MOTORU (TÜM ALARMLAR İÇİN SIRA İLE HESAPLAR) ---
     for alarm in st.session_state.alarms:
         if not alarm["is_active"]:
             continue
@@ -209,9 +212,8 @@ else:
                 trades_df['Giriş Tarihi'] = df.index[trades_df['entry_idx']]
                 trades_df['Çıkış Tarihi'] = df.index[trades_df['exit_idx']]
                 
-                # SÖZDİZİMİ HATASI DÜZELTİLEN GÜVENLİ VERİ YAPISI
+                # SÖZDİZİMİ HATALARINI ENGELLEYEN YALIN VERİ AKTARIMI
                 backtest_logs = pd.DataFrame()
                 backtest_logs["İşlem ID"] = trades_df['id'] + 1
                 backtest_logs["Giriş Tarihi"] = trades_df['Giriş Tarihi'].dt.strftime('%Y-%m-%d %H:%M')
                 backtest_logs["Çıkış Tarihi"] = trades_df['Çıkış Tarihi'].dt.strftime('%Y-%m-%d %H:%M')
-                backtest_logs["Giriş Fiyatı ($)"] = trades_df['entry_price'].round(4)
