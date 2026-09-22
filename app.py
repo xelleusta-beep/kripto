@@ -110,7 +110,7 @@ def compute_strategy_performance(df_input, train_ratio):
     except:
         return None, 0.0, 10000.0, pd.DataFrame(), 0
 
-# --- 4. HATA VEREN GRAFİK OLUŞTURMA İŞLEMİNİ FONKSİYONA HAPSETTİK ---
+# --- 4. GRAFİK OLUŞTURMA FONKSİYONU ---
 def build_candlestick_chart(data_df, label_text):
     try:
         candles = go.Candlestick(
@@ -126,6 +126,47 @@ def build_candlestick_chart(data_df, label_text):
         return fig_obj
     except:
         return None
+
+# --- 5. KESİN ÇÖZÜM: CANLI ALARMLARI İŞLEYEN BAĞIMSIZ YENİ FONKSİYON ---
+def process_live_alarms(b_token, c_id, p_mapping, i_mapping):
+    if not st.session_state.alarms:
+        return
+
+    for alarm in st.session_state.alarms:
+        if not alarm["is_active"]:
+            continue
+        
+        alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
+        alarm_raw = get_crypto_data(alm_symbol, p_mapping.get(alarm["period"], "30d"), i_mapping.get(alarm["interval"], "1h"))
+        
+        if alarm_raw.empty or len(alarm_raw) < 20:
+            continue
+            
+        try:
+            _, _, _, _, a_signal = compute_strategy_performance(alarm_raw, 80)
+            a_price = float(alarm_raw['Close'].iloc[-1])
+            alarm["last_price"] = a_price
+            
+            if alarm["last_signal"] != a_signal:
+                action = ""
+                if a_signal == 1 and alarm["balance"] > 0:
+                    alarm["crypto_amount"] = alarm["balance"] / a_price
+                    action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
+                    alarm["balance"] = 0.0
+                elif a_signal == 0 and alarm["crypto_amount"] > 0:
+                    alarm["balance"] = alarm["crypto_amount"] * a_price
+                    action = f"🔴 SATIM YAPILDI: Nakte geçildi."
+                    alarm["crypto_amount"] = 0.0
+                
+                alarm["last_signal"] = a_signal
+                
+                if action and b_token and c_id:
+                    cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
+                    msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
+                    send_telegram_signal(b_token, c_id, msg)
+                    st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
+        except:
+            pass
 
 # 2. Yan Panel (Sidebar) Parametreleri
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
@@ -194,34 +235,3 @@ else:
     
     if processed_df is not None:
         
-        # --- CANLI ALARMLARI GÜNCELLEME DÖNGÜSÜ ---
-        for alarm in st.session_state.alarms:
-            if not alarm["is_active"]:
-                continue
-            
-            alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
-            alarm_raw = get_crypto_data(alm_symbol, period_mapping[alarm["period"]], interval_mapping[alarm["interval"]])
-            
-            if not alarm_raw.empty and len(alarm_raw) > 20:
-                try:
-                    _, _, _, _, a_signal = compute_strategy_performance(alarm_raw, 80)
-                    a_price = float(alarm_raw['Close'].iloc[-1])
-                    alarm["last_price"] = a_price
-                    
-                    if alarm["last_signal"] != a_signal:
-                        action = ""
-                        if a_signal == 1 and alarm["balance"] > 0:
-                            alarm["crypto_amount"] = alarm["balance"] / a_price
-                            action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
-                            alarm["balance"] = 0.0
-                        elif a_signal == 0 and alarm["crypto_amount"] > 0:
-                            alarm["balance"] = alarm["crypto_amount"] * a_price
-                            action = f"🔴 SATIM YAPILDI: Nakte geçildi."
-                            alarm["crypto_amount"] = 0.0
-                        
-                        alarm["last_signal"] = a_signal
-                        
-                        if action and bot_token and chat_id:
-                            cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
-                            msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
-                            send_telegram_signal(bot_token, chat_id, msg)
