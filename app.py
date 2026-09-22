@@ -4,12 +4,12 @@ import vectorbt as vbt
 import plotly.graph_objects as go
 import requests
 import io
-import yfinance as yf
+import ccxt
 from sklearn.ensemble import RandomForestClassifier
 
 # 1. Sayfa Konfigürasyonu
 st.set_page_config(layout="wide", page_title="Yapay Zeka Çoklu Otomasyon Paneli")
-st.title("🤖 ML Kripto Backtest & Çoklu Canlı Alarm Yönetim Platformu")
+st.title("🤖 ML Kripto Backtest & Çoklu Canlı MEXC Alarm Yönetim Platformu")
 
 # --- OTURUM BELLEĞİ (SESSION STATE) ---
 if "alarms" not in st.session_state:
@@ -27,26 +27,34 @@ def send_telegram_signal(token, chat_id, message):
     except:
         return False
 
-# --- 2. YFINANCE GÜVENLİ VERİ ÇEKME FONKSİYONU ---
-def get_crypto_data(symbol_name, prd, inv):
+# --- 2. KESİN VE CANLI ÇÖZÜM: MEXC BORSASI VERİ MOTORU ---
+def get_crypto_data(symbol_name, prd_days, inv_str):
     try:
-        ticker_obj = yf.Ticker(symbol_name)
-        res_df = ticker_obj.history(period=prd, interval=inv)
-        if res_df.empty:
-            res_df = yf.download(symbol_name, period=prd, interval=inv, progress=False)
-        if not res_df.empty:
-            cleaned_df = pd.DataFrame({
-                'Open': res_df['Open'],
-                'High': res_df['High'],
-                'Low': res_df['Low'],
-                'Close': res_df['Close']
-            })
-            return cleaned_df
+        # MEXC borsasına doğrudan kurumsal bağlantı
+        exchange = ccxt.mexc({
+            'enableRateLimit': True,
+            'options': {'defaultType': 'spot'}
+        })
+        
+        # Gün ayarlarına göre MEXC'den çekilecek maksimum mum limiti
+        limit_mapping = {"7 Gün": 200, "30 Gün": 750, "2 Ay": 1000, "1 Yıl": 1000, "3 Yıl": 1500}
+        safe_limit = limit_mapping.get(prd_days, 500)
+        
+        # %100 Gerçek ve Canlı Mum Verilerini Çekme
+        ohlcv = exchange.fetch_ohlcv(symbol_name, timeframe=inv_str, limit=safe_limit)
+        
+        if ohlcv and len(ohlcv) > 20:
+            df_res = pd.DataFrame(ohlcv, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+            df_res['Timestamp'] = pd.to_datetime(df_res['Timestamp'], unit='ms')
+            df_res.set_index('Timestamp', inplace=True)
+            return df_res[['Open', 'High', 'Low', 'Close']]
+            
         return pd.DataFrame()
     except:
+        # Bağlantı koparsa boş döner ve arayüze uyarı basar (Simülasyon motoru kaldırıldı)
         return pd.DataFrame()
 
-# --- 3. TEMİZ VE HAFİF PANDAS BACKTEST MATEMATİK MOTORU ---
+# --- 3. PANDAS BACKTEST MATEMATİK MOTORU ---
 def compute_strategy_performance(df_input, train_ratio):
     try:
         working_df = df_input.copy()
@@ -134,14 +142,13 @@ def build_candlestick_chart(data_df, label_text):
         return None
 
 # --- 5. CANLI ALARMLARI İŞLEYEN FONKSİYON ---
-def process_live_alarms(b_token, c_id, p_mapping, i_mapping):
+def process_live_alarms(b_token, c_id):
     if not st.session_state.alarms:
         return
     for alarm in st.session_state.alarms:
         if not alarm["is_active"]:
             continue
-        alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
-        alarm_raw = get_crypto_data(alm_symbol, p_mapping.get(alarm["period"], "30d"), i_mapping.get(alarm["interval"], "1h"))
+        alarm_raw = get_crypto_data(alarm["ticker"], alarm["period"], alarm["interval"])
         if alarm_raw.empty or len(alarm_raw) < 10:
             continue
         try:
@@ -161,7 +168,7 @@ def process_live_alarms(b_token, c_id, p_mapping, i_mapping):
                 alarm["last_signal"] = a_signal
                 if action and b_token and c_id:
                     cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
-                    msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
+                    msg = f"⚡ *MEXC ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
                     send_telegram_signal(b_token, c_id, msg)
                     st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
         except:
@@ -178,19 +185,13 @@ st.sidebar.header("🔍 2. Kripto Seçimi & Backtest Ayarları")
 crypto_list = [
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT", 
     "ADA/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
-    "DOGE/USDT", "SHIB/USDT", "PEPE/USDT", "WIF/USDT", "BONK/USDT",
-    "NEAR/USDT", "SUI/USDT", "APT/USDT", "OP/USDT", "ARB/USDT",
-    "LTC/USDT", "BCH/USDT", "UNI/USDT", "ATOM/USDT", "ICP/USDT",
-    "FIL/USDT", "RNDR/USDT", "FET/USDT", "INJ/USDT", "TIA/USDT",
-    "IMX/USDT", "STX/USDT", "GRT/USDT", "THETA/USDT", "FTM/USDT",
-    "ALGO/USDT", "VET/USDT", "EGLD/USDT", "SAND/USDT", "MANA/USDT"
+    "DOGE/USDT", "SHIB/USDT", "NEAR/USDT", "SUI/USDT", "LTC/USDT"
 ]
 
-ticker = st.sidebar.selectbox("Kripto Para Seçin", crypto_list)
-interval_label = st.sidebar.selectbox("Veri Sıklığı (Grafik Mum Tipi)", ["1 Dakika", "5 Dakika", "15 Dakika", "1 Saat", "1 Gün"])
+ticker = st.sidebar.selectbox("Kripto Para Seçin (MEXC Canlı)", crypto_list)
+interval_label = st.sidebar.selectbox("Veri Sıklığı (Grafik Mum Tipi)", ["1 Saat", "1 Gün"])
 
-interval_mapping = {"1 Dakika": "1m", "5 Dakika": "5m", "15 Dakika": "15m", "1 Saat": "1h", "1 Gün": "1d"}
-period_mapping = {"7 Gün": "7d", "30 Gün": "30d", "2 Ay": "2mo", "1 Yıl": "1y", "3 Yıl": "3y"}
+interval_mapping = {"1 Saat": "1h", "1 Gün": "1d"}
 
 time_period = st.sidebar.selectbox("Geçmiş Test Süresi", ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"], index=3)
 train_size = st.sidebar.slider("Yapay Zeka Eğitim Verisi Oranı (%)", 50, 90, 80)
@@ -201,21 +202,25 @@ alarm_init_balance = st.sidebar.number_input("Bu Alarma Özel Başlangıç Bakiy
 
 if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_width=True):
     new_alarm = {
-        "id": len(st.session_state.alarms) + 1, "ticker": ticker, "interval": interval_label, "period": time_period,
+        "id": len(st.session_state.alarms) + 1, "ticker": ticker, "interval": interval_mapping[interval_label], "period": time_period,
         "balance": float(alarm_init_balance), "crypto_amount": 0.0, "last_signal": None, "last_price": 0.0, "is_active": True
     }
     st.session_state.alarms.append(new_alarm)
-    st.sidebar.success(f"Başarılı! {ticker} havuzunuza eklendi.")
+    st.sidebar.success(f"Başarılı! {ticker} MEXC alarm havuzuna eklendi.")
 
 # --- SEKMELİ ÖN YÜZ HIERARŞİSİ ---
 tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
-symbol = ticker.replace("/", "-").replace("USDT", "USD")
-raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
+# MEXC Borsasından Canlı Verileri Çekme Tetikleyicisi
+raw_df = get_crypto_data(ticker, time_period, interval_mapping[interval_label])
 
-# HATA VEREN BLOK KALDIRILDI - DOĞRUSAL ÇİZİM BAŞLADI
 if raw_df.empty or len(raw_df) < 10:
     with tab1:
-        st.warning("⚠️ Yahoo Finance sunucularından anlık veri çekilemedi. Lütfen sayfayı yenileyin veya yan panelden farklı bir zaman dilimi seçin.")
+        st.error("⚠️ MEXC API bağlantı hatası veya veri kümesi boş döndü! Lütfen kısa bir süre sonra sayfayı yenileyin veya farklı bir coin/zaman periyodu seçin.")
 else:
     processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
+    process_live_alarms(bot_token, chat_id)
+
+    # TAB 1 İÇERİĞİ 
+    with tab1:
+        st.write(f"### 📈 {ticker} MEXC Canlı Strateji Analiz Paneli")
