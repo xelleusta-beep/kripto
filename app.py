@@ -147,8 +147,8 @@ def process_live_alarms(b_token, c_id):
             continue
         try:
             res = compute_strategy_performance(alarm_raw, 80)
-            if res[0] is not None:
-                a_proc, _, _, _, a_signal = res
+            if res is not None:
+                _, _, _, _, a_signal = res
                 a_price = float(alarm_raw['Close'].iloc[-1])
                 alarm["last_price"] = a_price
                 if alarm["last_signal"] != a_signal:
@@ -208,15 +208,15 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
 # --- SEKMELİ ÖN YÜZ TANIMLAMASI ---
 tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
-# --- VERİ VE STRATEJİ AKIŞI (HİZALAMA KİLİTLENMESİNİ ÖNLEYEN YENİ NESİL YALIN YAPI) ---
+# --- VERİ VE STRATEJİ AKIŞI (TAMAMEN DOĞRUSAL VE HİZALAMADAN BAĞIMSIZ) ---
 raw_df = get_crypto_data(ticker, time_period, interval_mapping[interval_label])
 
-# Hata yakalama ve canlandırma katmanı
-if raw_df.empty or len(raw_df) < 10:
-    with tab1:
-        st.warning("⚠️ MEXC sunucularından anlık veri çekilemedi. Lütfen sayfayı yenileyin veya yan panelden farklı bir zaman dilimi seçin.")
-else:
-    processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
-    process_live_alarms(bot_token, chat_id)
+# HESAPLAMALAR VE GRAFİKLER (ASLA IF-ELSE VEYA WITH BLOKLARININ İÇİNE GÖMÜLMEZ)
+processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
+process_live_alarms(bot_token, chat_id)
 
-    with tab1:
+# --- SEKME 1: BACKTEST VE ANALİZ ALANI ---
+with tab1:
+    st.write(f"### 📈 {ticker} MEXC Canlı Strateji Analiz Paneli")
+    
+    if raw_df.empty or len(raw_df) < 10 or processed_df is None:
