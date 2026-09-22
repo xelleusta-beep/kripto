@@ -54,7 +54,7 @@ def compute_strategy_performance(df_input, train_ratio):
         working_df['Signal_Target'] = (working_df['Close'].shift(-1) > working_df['Close']).astype(int)
         working_df.dropna(inplace=True)
 
-        if len(working_df) < 15:
+        if len(working_df) < 10:
             return None, 0.0, 10000.0, pd.DataFrame(), 0
 
         X = working_df[['Return', 'RSI', 'Price_to_SMA']]
@@ -131,22 +131,17 @@ def build_candlestick_chart(data_df, label_text):
 def process_live_alarms(b_token, c_id, p_mapping, i_mapping):
     if not st.session_state.alarms:
         return
-
     for alarm in st.session_state.alarms:
         if not alarm["is_active"]:
             continue
-        
         alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
         alarm_raw = get_crypto_data(alm_symbol, p_mapping.get(alarm["period"], "30d"), i_mapping.get(alarm["interval"], "1h"))
-        
-        if alarm_raw.empty or len(alarm_raw) < 20:
+        if alarm_raw.empty or len(alarm_raw) < 15:
             continue
-            
         try:
             _, _, _, _, a_signal = compute_strategy_performance(alarm_raw, 80)
             a_price = float(alarm_raw['Close'].iloc[-1])
             alarm["last_price"] = a_price
-            
             if alarm["last_signal"] != a_signal:
                 action = ""
                 if a_signal == 1 and alarm["balance"] > 0:
@@ -157,9 +152,7 @@ def process_live_alarms(b_token, c_id, p_mapping, i_mapping):
                     alarm["balance"] = alarm["crypto_amount"] * a_price
                     action = f"🔴 SATIM YAPILDI: Nakte geçildi."
                     alarm["crypto_amount"] = 0.0
-                
                 alarm["last_signal"] = a_signal
-                
                 if action and b_token and c_id:
                     cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
                     msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
@@ -168,69 +161,59 @@ def process_live_alarms(b_token, c_id, p_mapping, i_mapping):
         except:
             pass
 
-# --- 6. GÜVENLİ VE HİZALANMIŞ ANA PROGRAM KATMANI ---
-def main():
-    st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
-    bot_token = st.sidebar.text_input("Telegram Bot Token", type="password")
-    chat_id = st.sidebar.text_input("Telegram Chat ID", type="password")
+# --- 6. ARARYÜZ BİLEŞENLERİ PANELİ ---
+st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
+bot_token = st.sidebar.text_input("Telegram Bot Token", type="password")
+chat_id = st.sidebar.text_input("Telegram Chat ID", type="password")
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("🔍 2. Kripto Seçimi & Backtest Ayarları")
+st.sidebar.markdown("---")
+st.sidebar.header("🔍 2. Kripto Seçimi & Backtest Ayarları")
 
-    crypto_list = [
-        "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT", 
-        "ADA/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
-        "DOGE/USDT", "SHIB/USDT", "PEPE/USDT", "WIF/USDT", "BONK/USDT",
-        "NEAR/USDT", "SUI/USDT", "APT/USDT", "OP/USDT", "ARB/USDT",
-        "LTC/USDT", "BCH/USDT", "UNI/USDT", "ATOM/USDT", "ICP/USDT",
-        "FIL/USDT", "RNDR/USDT", "FET/USDT", "INJ/USDT", "TIA/USDT",
-        "IMX/USDT", "STX/USDT", "GRT/USDT", "THETA/USDT", "FTM/USDT",
-        "ALGO/USDT", "VET/USDT", "EGLD/USDT", "SAND/USDT", "MANA/USDT"
-    ]
+crypto_list = [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT", 
+    "ADA/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
+    "DOGE/USDT", "SHIB/USDT", "PEPE/USDT", "WIF/USDT", "BONK/USDT",
+    "NEAR/USDT", "SUI/USDT", "APT/USDT", "OP/USDT", "ARB/USDT",
+    "LTC/USDT", "BCH/USDT", "UNI/USDT", "ATOM/USDT", "ICP/USDT",
+    "FIL/USDT", "RNDR/USDT", "FET/USDT", "INJ/USDT", "TIA/USDT",
+    "IMX/USDT", "STX/USDT", "GRT/USDT", "THETA/USDT", "FTM/USDT",
+    "ALGO/USDT", "VET/USDT", "EGLD/USDT", "SAND/USDT", "MANA/USDT"
+]
 
-    ticker = st.sidebar.selectbox("Kripto Para Seçin", crypto_list)
-    interval_label = st.sidebar.selectbox("Veri Sıklığı (Grafik Mum Tipi)", ["1 Dakika", "5 Dakika", "15 Dakika", "1 Saat", "1 Gün"])
+ticker = st.sidebar.selectbox("Kripto Para Seçin", crypto_list)
+interval_label = st.sidebar.selectbox("Veri Sıklığı (Grafik Mum Tipi)", ["1 Dakika", "5 Dakika", "15 Dakika", "1 Saat", "1 Gün"])
 
-    interval_mapping = {"1 Dakika": "1m", "5 Dakika": "5m", "15 Dakika": "15m", "1 Saat": "1h", "1 Gün": "1d"}
-    period_mapping = {"7 Gün": "7d", "30 Gün": "30d", "2 Ay": "2mo", "1 Yıl": "1y", "3 Yıl": "3y"}
+interval_mapping = {"1 Dakika": "1m", "5 Dakika": "5m", "15 Dakika": "15m", "1 Saat": "1h", "1 Gün": "1d"}
+period_mapping = {"7 Gün": "7d", "30 Gün": "30d", "2 Ay": "2mo", "1 Yıl": "1y", "3 Yıl": "3y"}
 
-    time_period = st.sidebar.selectbox(
-        "Geçmiş Test Süresi", 
-        ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"],
-        index=3
-    )
+time_period = st.sidebar.selectbox("Geçmiş Test Süresi", ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"], index=3)
+train_size = st.sidebar.slider("Yapay Zeka Eğitim Verisi Oranı (%)", 50, 90, 80)
 
-    train_size = st.sidebar.slider("Yapay Zeka Eğitim Verisi Oranı (%)", 50, 90, 80)
+st.sidebar.markdown("---")
+st.sidebar.header("🚨 3. Alarm Oluşturma")
+alarm_init_balance = st.sidebar.number_input("Bu Alarma Özel Başlangıç Bakiyesi ($)", min_value=10.0, value=1000.0, step=100.0)
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("🚨 3. Alarm Oluşturma")
-    alarm_init_balance = st.sidebar.number_input("Bu Alarma Özel Başlangıç Bakiyesi ($)", min_value=10.0, value=1000.0, step=100.0)
+if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_width=True):
+    new_alarm = {
+        "id": len(st.session_state.alarms) + 1, "ticker": ticker, "interval": interval_label, "period": time_period,
+        "balance": float(alarm_init_balance), "crypto_amount": 0.0, "last_signal": None, "last_price": 0.0, "is_active": True
+    }
+    st.session_state.alarms.append(new_alarm)
+    st.sidebar.success(f"Başarılı! {ticker} havuzunuza eklendi.")
 
-    if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_width=True):
-        new_alarm = {
-            "id": len(st.session_state.alarms) + 1,
-            "ticker": ticker,
-            "interval": interval_label,
-            "period": time_period,
-            "balance": float(alarm_init_balance),
-            "crypto_amount": 0.0,
-            "last_signal": None,
-            "last_price": 0.0,
-            "is_active": True
-        }
-        st.session_state.alarms.append(new_alarm)
-        st.sidebar.success(f"Başarılı! {ticker} havuzunuza eklendi.")
+# --- SEKMELİ ÖN YÜZ HIERARŞİSİ ---
+tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
-    # İşlem Akışı
-    symbol = ticker.replace("/", "-").replace("USDT", "USD")
-    raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
+# Veri Akış Hesaplama Yönetimi (Çökmeyi engelleyen dış katman)
+symbol = ticker.replace("/", "-").replace("USDT", "USD")
+raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
 
-    if raw_df.empty or len(raw_df) < 20:
-        st.error("Seçili borsa verisi yüklenemedi. Lütfen yan panelden zaman ayarlarını değiştirin.")
-        return
-
+if raw_df.empty or len(raw_df) < 15:
+    with tab1:
+        st.warning("⚠️ Seçilen zaman aralığı için borsa verisi henüz yüklenemedi veya Yahoo Finance sınırına takıldı. Lütfen sol panelden '1 Saat' mum tipi ve '2 Ay' gibi daha dengeli süreler seçmeyi deneyin.")
+else:
     processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
-    
-    if processed_df is None:
-        st.error("Strateji hesaplamaları çalıştırılamadı.")
-        return
+    process_live_alarms(bot_token, chat_id, period_mapping, interval_mapping)
+
+    with tab1:
+        st.write(f"### 📈 {ticker} Strateji Analiz Paneli")
