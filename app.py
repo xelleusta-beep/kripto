@@ -27,18 +27,13 @@ def send_telegram_signal(token, chat_id, message):
     except:
         return False
 
-# --- 2. KESİN ÇÖZÜM: YFINANCE TABANLI GÜVENLİ VERİ ÇEKME FONKSİYONU ---
+# --- 2. YFINANCE GÜVENLİ VERİ ÇEKME FONKSİYONU ---
 def get_crypto_data(symbol_name, prd, inv):
     try:
-        # yfinance ile doğrudan ve güvenli indirme
         ticker_obj = yf.Ticker(symbol_name)
         res_df = ticker_obj.history(period=prd, interval=inv)
-        
         if res_df.empty:
-            # Alternatif deneme (Kripto eşleşmesi için)
-            alt_symbol = symbol_name.replace("-USD", f"-BTC" if "BTC" in symbol_name else "-USD")
             res_df = yf.download(symbol_name, period=prd, interval=inv, progress=False)
-            
         if not res_df.empty:
             cleaned_df = pd.DataFrame({
                 'Open': res_df['Open'],
@@ -56,15 +51,13 @@ def compute_strategy_performance(df_input, train_ratio):
     try:
         working_df = df_input.copy()
         working_df['Return'] = working_df['Close'].pct_change()
-        
-        # Basit indikatör hesaplamaları
         working_df['RSI'] = vbt.RSI.run(working_df['Close'], window=14).rsi
         working_df['SMA_20'] = vbt.MA.run(working_df['Close'], window=20).ma
         working_df['Price_to_SMA'] = working_df['Close'] / working_df['SMA_20']
         working_df['Signal_Target'] = (working_df['Close'].shift(-1) > working_df['Close']).astype(int)
         working_df.dropna(inplace=True)
 
-        if len(working_df) < 5:
+        if len(working_df) < 10:
             return None, 0.0, 10000.0, pd.DataFrame(), 0
 
         X = working_df[['Return', 'RSI', 'Price_to_SMA']]
@@ -72,7 +65,6 @@ def compute_strategy_performance(df_input, train_ratio):
         
         model = RandomForestClassifier(random_state=42, n_estimators=50)
         split_idx = int(len(X) * (train_ratio / 100))
-        
         if split_idx == 0 or split_idx >= len(X):
             split_idx = int(len(X) * 0.8)
             
@@ -218,9 +210,12 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
 # --- SEKMELİ ÖN YÜZ HIERARŞİSİ ---
 tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
-# Sembol Formatını Doğrudan yfinance Standartına Alıyoruz (Örn: ETH-USD)
 symbol = ticker.replace("/", "-").replace("USDT", "USD")
 raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
 
+# HATA VEREN BLOK KALDIRILDI - DOĞRUSAL ÇİZİM BAŞLADI
 if raw_df.empty or len(raw_df) < 10:
     with tab1:
+        st.warning("⚠️ Yahoo Finance sunucularından anlık veri çekilemedi. Lütfen sayfayı yenileyin veya yan panelden farklı bir zaman dilimi seçin.")
+else:
+    processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
