@@ -4,3 +4,4 @@ vectorbt==0.26.1
 scikit-learn
 ccxt
 plotly==5.18.0
+yfinance
