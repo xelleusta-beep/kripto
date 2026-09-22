@@ -1,6 +1,6 @@
 streamlit
-pandas
-vectorbt
+pandas<2.2.0
+vectorbt==0.26.1
 scikit-learn
 ccxt
-plotly
+plotly==5.18.0
