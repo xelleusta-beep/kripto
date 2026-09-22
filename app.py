@@ -16,7 +16,7 @@ if "alarms" not in st.session_state:
 if "global_trade_history" not in st.session_state:
     st.session_state.global_trade_history = []
 
-# --- YARDIMCI FONKSİYONLAR ---
+# --- FONKSİYON 1: TELEGRAM SİNYAL GÖNDERME ---
 def send_telegram_signal(token, chat_id, message):
     try:
         url = f"https://telegram.org{token}/sendMessage"
@@ -26,6 +26,7 @@ def send_telegram_signal(token, chat_id, message):
     except:
         return False
 
+# --- FONKSİYON 2: GÜVENLİ VERİ ÇEKME ---
 def get_crypto_data(symbol_name, prd, inv):
     try:
         yf_data = vbt.YFData.download(symbol_name, period=prd, interval=inv)
@@ -42,6 +43,7 @@ def get_crypto_data(symbol_name, prd, inv):
     except:
         return pd.DataFrame()
 
+# --- FONKSİYON 3: MAKİNE ÖĞRENİMİ VE BACKTEST MOTORU ---
 def run_ml_and_backtest(df_input, train_ratio):
     try:
         working_df = df_input.copy()
@@ -74,6 +76,29 @@ def run_ml_and_backtest(df_input, train_ratio):
     except:
         return None, None
 
+# --- FONKSİYON 4: KESİN ÇÖZÜM - İŞLEM GEÇMİŞİ TABLOSU OLUŞTURMA ---
+def build_trade_logs_df(portfolio_obj, processed_df_obj):
+    try:
+        trades_df = portfolio_obj.trades.to_df()
+        if trades_df is None or trades_df.empty:
+            return pd.DataFrame()
+            
+        entry_dates = processed_df_obj.index[trades_df['Entry Index']]
+        exit_dates = processed_df_obj.index[trades_df['Exit Index']]
+        
+        logs = pd.DataFrame()
+        logs["İşlem ID"] = trades_df['Trade ID'] + 1
+        logs["Giriş Tarihi"] = entry_dates.strftime('%Y-%m-%d %H:%M')
+        logs["Çıkış Tarihi"] = exit_dates.strftime('%Y-%m-%d %H:%M')
+        logs["Giriş Fiyatı ($)"] = trades_df['Entry Price'].round(4)
+        logs["Çıkış Fiyatı ($)"] = trades_df['Exit Price'].round(4)
+        logs["Miktar (Adet)"] = trades_df['Size'].round(6)
+        logs["Net Kâr/Zarar ($)"] = trades_df['PnL'].round(2)
+        logs["Getiri (%)"] = (trades_df['Return'] * 100).round(2).astype(str) + "%"
+        return logs
+    except:
+        return pd.DataFrame()
+
 # 2. Yan Panel (Sidebar) Ayarları
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
 bot_token = st.sidebar.text_input("Telegram Bot Token", type="password")
@@ -101,12 +126,13 @@ period_mapping = {"7 Gün": "7d", "30 Gün": "30d", "2 Ay": "2mo", "1 Yıl": "1y
 
 time_period = st.sidebar.selectbox(
     "Geçmiş Test Süresi", 
-    ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Year"],
-    index=1 if "Dakika" in interval_label else 3
+    ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"],
+    index=["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"].index(
+        "7 Gün" if interval_label == "1 Dakika" else 
+        "30 Gün" if "Dakika" in interval_label else 
+        "2 Ay" if interval_label == "1 Saat" else "1 Yıl"
+    )
 )
-
-# Yahoo finance period kelime uyumu düzeltmesi
-safe_period_str = "3y" if time_period == "3 Year" else period_mapping.get(time_period, "30d")
 
 train_size = st.sidebar.slider("Yapay Zeka Eğitim Verisi Oranı (%)", 50, 90, 80)
 
@@ -131,10 +157,10 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
 
 # --- ANA PROGRAM AKIŞI ---
 symbol = ticker.replace("/", "-").replace("USDT", "USD")
-raw_df = get_crypto_data(symbol, safe_period_str, interval_mapping[interval_label])
+raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
 
 if raw_df.empty or len(raw_df) < 20:
-    st.error("Seçili borsa verisi yüklenemedi. Lütfen zaman ayarlarını değiştirin.")
+    st.error("Seçili borsa verisi yüklenemedi. Lütfen yan panelden zaman ayarlarını değiştirin.")
 else:
     processed_df, portfolio = run_ml_and_backtest(raw_df, train_size)
     
@@ -146,8 +172,7 @@ else:
                 continue
             
             alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
-            alm_period_safe = "3y" if alarm["period"] == "3 Year" else period_mapping.get(alarm["period"], "30d")
-            alarm_raw = get_crypto_data(alm_symbol, alm_period_safe, interval_mapping[alarm["interval"]])
+            alarm_raw = get_crypto_data(alm_symbol, period_mapping[alarm["period"]], interval_mapping[alarm["interval"]])
             
             if not alarm_raw.empty and len(alarm_raw) > 20:
                 try:
@@ -196,22 +221,3 @@ else:
             with col2:
                 st.write("#### 📊 Geçmiş Dönem Performans Sonuçları")
                 total_ret = portfolio.total_return() * 100
-                st.metric(label="Yapay Zeka Toplam Net Kâr/Zarar", value=f"{total_ret:.2f}%", delta=f"{total_ret:.2f}%")
-                
-                st.write("##### 🛠️ Detaylı Backtest İstatistikleri")
-                stats_df = pd.DataFrame(portfolio.stats(), columns=["Değer"]).astype(str)
-                st.dataframe(stats_df, width="stretch")
-                
-            st.markdown("---")
-            st.write("### 📜 Yapay Zekanın Geçmiş Tüm İşlemlerinin Detaylı Listesi (Trade Logs)")
-            
-            try:
-                # KESİN ÇÖZÜM: records_df yerine to_df() fonksiyonu kullanıldı
-                trades_df = portfolio.trades.to_df()
-                if not trades_df.empty:
-                    entry_dates = processed_df.index[trades_df['Entry Index']]
-                    exit_dates = processed_df.index[trades_df['Exit Index']]
-                    
-                    backtest_logs = pd.DataFrame()
-                    backtest_logs["İşlem ID"] = trades_df['Trade ID'] + 1
-                    backtest_logs["Giriş Tarihi"] = entry_dates.strftime('%Y-%m-%d %H:%M')
