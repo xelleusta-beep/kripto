@@ -16,7 +16,7 @@ if "alarms" not in st.session_state:
 if "global_trade_history" not in st.session_state:
     st.session_state.global_trade_history = []
 
-# --- FONKSİYON 1: TELEGRAM SİNYAL GÖNDERME ---
+# --- TELEGRAM SİNYAL GÖNDERME ---
 def send_telegram_signal(token, chat_id, message):
     try:
         url = f"https://telegram.org{token}/sendMessage"
@@ -26,7 +26,7 @@ def send_telegram_signal(token, chat_id, message):
     except:
         return False
 
-# --- FONKSİYON 2: GÜVENLİ VERİ ÇEKME ---
+# --- GÜVENLİ VERİ ÇEKME ---
 def get_crypto_data(symbol_name, prd, inv):
     try:
         yf_data = vbt.YFData.download(symbol_name, period=prd, interval=inv)
@@ -40,62 +40,6 @@ def get_crypto_data(symbol_name, prd, inv):
             if isinstance(res_df[col], pd.DataFrame):
                 res_df[col] = res_df[col].iloc[:, 0]
         return res_df
-    except:
-        return pd.DataFrame()
-
-# --- FONKSİYON 3: MAKİNE ÖĞRENİMİ VE BACKTEST MOTORU ---
-def run_ml_and_backtest(df_input, train_ratio):
-    try:
-        working_df = df_input.copy()
-        working_df['Return'] = working_df['Close'].pct_change()
-        working_df['RSI'] = vbt.RSI.run(working_df['Close'], window=14).rsi
-        working_df['SMA_20'] = vbt.MA.run(working_df['Close'], window=20).ma
-        working_df['Price_to_SMA'] = working_df['Close'] / working_df['SMA_20']
-        working_df['Signal_Target'] = (working_df['Close'].shift(-1) > working_df['Close']).astype(int)
-        working_df.dropna(inplace=True)
-
-        if len(working_df) < 10:
-            return None, None
-
-        X = working_df[['Return', 'RSI', 'Price_to_SMA']]
-        y = working_df['Signal_Target']
-        
-        model = RandomForestClassifier(random_state=42, n_estimators=100)
-        split_idx = int(len(X) * (train_ratio / 100))
-        
-        model.fit(X[:split_idx], y[:split_idx])
-        working_df['Predicted_Signal'] = model.predict(X)
-
-        portfolio = vbt.Portfolio.from_signals(
-            working_df['Close'], 
-            entries=(working_df['Predicted_Signal'] == 1), 
-            exits=(working_df['Predicted_Signal'] == 0), 
-            fees=0.001
-        )
-        return working_df, portfolio
-    except:
-        return None, None
-
-# --- FONKSİYON 4: İŞLEM GEÇMİŞİ TABLOSU OLUŞTURMA ---
-def build_trade_logs_df(portfolio_obj, processed_df_obj):
-    try:
-        trades_df = portfolio_obj.trades.to_df()
-        if trades_df is None or trades_df.empty:
-            return pd.DataFrame()
-            
-        entry_dates = processed_df_obj.index[trades_df['Entry Index']]
-        exit_dates = processed_df_obj.index[trades_df['Exit Index']]
-        
-        logs = pd.DataFrame()
-        logs["İşlem ID"] = trades_df['Trade ID'] + 1
-        logs["Giriş Tarihi"] = entry_dates.strftime('%Y-%m-%d %H:%M')
-        logs["Çıkış Tarihi"] = exit_dates.strftime('%Y-%m-%d %H:%M')
-        logs["Giriş Fiyatı ($)"] = trades_df['Entry Price'].round(4)
-        logs["Çıkış Fiyatı ($)"] = trades_df['Exit Price'].round(4)
-        logs["Miktar (Adet)"] = trades_df['Size'].round(6)
-        logs["Net Kâr/Zarar ($)"] = trades_df['PnL'].round(2)
-        logs["Getiri (%)"] = (trades_df['Return'] * 100).round(2).astype(str) + "%"
-        return logs
     except:
         return pd.DataFrame()
 
@@ -157,67 +101,127 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
 
 # --- ANA PROGRAM AKIŞI ---
 symbol = ticker.replace("/", "-").replace("USDT", "USD")
-raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
+df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
 
-if raw_df.empty or len(raw_df) < 20:
+if df.empty or len(df) < 20:
     st.error("Seçili borsa verisi yüklenemedi. Lütfen yan panelden zaman ayarlarını değiştirin.")
 else:
-    processed_df, portfolio = run_ml_and_backtest(raw_df, train_size)
-    
-    if processed_df is not None and portfolio is not None:
+    # İndikatör Hesaplama (ML Şartları)
+    df['Return'] = df['Close'].pct_change()
+    df['RSI'] = vbt.RSI.run(df['Close'], window=14).rsi
+    df['SMA_20'] = vbt.MA.run(df['Close'], window=20).ma
+    df['Price_to_SMA'] = df['Close'] / df['SMA_20']
+    df['Signal_Target'] = (df['Close'].shift(-1) > df['Close']).astype(int)
+    df.dropna(inplace=True)
+
+    # ML Model Eğitimi (Random Forest)
+    X = df[['Return', 'RSI', 'Price_to_SMA']]
+    y = df['Signal_Target']
+    model = RandomForestClassifier(random_state=42, n_estimators=100)
+    split_index = int(len(X) * (train_size / 100))
+    model.fit(X[:split_index], y[:split_index])
+    df['Predicted_Signal'] = model.predict(X)
+
+    current_price = float(df['Close'].iloc[-1])
+    latest_signal = int(df['Predicted_Signal'].iloc[-1])
+
+    # --- PANDAS TABANLI HAFİF VE ÇÖKMEZ BACKTEST HESAPLAYICI ---
+    trade_logs_list = []
+    in_position = False
+    entry_price = 0.0
+    entry_date = None
+    initial_cash = 10000.0
+    cash = initial_cash
+    crypto_units = 0.0
+
+    for i in range(len(df)):
+        current_date_idx = df.index[i]
+        price_at_idx = float(df['Close'].iloc[i])
+        sig = int(df['Predicted_Signal'].iloc[i])
+
+        if sig == 1 and not in_position:
+            # ALIM İŞLEMİ
+            crypto_units = (cash / price_at_idx) * 0.999 # %0.1 Komisyon düşüldü
+            entry_price = price_at_idx
+            entry_date = current_date_idx
+            cash = 0.0
+            in_position = True
+        elif sig == 0 and in_position:
+            # SATIM İŞLEMİ
+            cash = (crypto_units * price_at_idx) * 0.999 # %0.1 Komisyon düşüldü
+            pnl_val = cash - initial_cash if len(trade_logs_list) == 0 else cash - (initial_cash + sum([t['Net Kâr/Zarar ($)'] for t in trade_logs_list]))
+            ret_pct = ((price_at_idx - entry_price) / entry_price) * 100
+            
+            trade_logs_list.append({
+                "İşlem ID": len(trade_logs_list) + 1,
+                "Giriş Tarihi": entry_date.strftime('%Y-%m-%d %H:%M'),
+                "Çıkış Tarihi": current_date_idx.strftime('%Y-%m-%d %H:%M'),
+                "Giriş Fiyatı ($)": round(entry_price, 4),
+                "Çıkış Fiyatı ($)": round(price_at_idx, 4),
+                "Miktar (Adet)": round(crypto_units, 6),
+                "Net Kâr/Zarar ($)": round(pnl_val, 2),
+                "Getiri (%)": f"{ret_pct:.2f}%"
+            })
+            crypto_units = 0.0
+            in_position = False
+
+    # Son cüzdan değeri hesabı
+    final_wallet_value = cash if not in_position else (crypto_units * current_price)
+    total_net_return_pct = ((final_wallet_value - initial_cash) / initial_cash) * 100
+
+    backtest_logs = pd.DataFrame(trade_logs_list)
+
+    # --- CANLI ALARMLARI GÜNCELLEME DÖNGÜSÜ ---
+    for alarm in st.session_state.alarms:
+        if not alarm["is_active"]:
+            continue
         
-        # --- CANLI ALARMLARI GÜNCELLEME DÖNGÜSÜ ---
-        for alarm in st.session_state.alarms:
-            if not alarm["is_active"]:
-                continue
-            
-            alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
-            alarm_raw = get_crypto_data(alm_symbol, period_mapping[alarm["period"]], interval_mapping[alarm["interval"]])
-            
-            if not alarm_raw.empty and len(alarm_raw) > 20:
-                try:
-                    a_proc, _ = run_ml_and_backtest(alarm_raw, 80)
-                    if a_proc is not None:
-                        a_price = float(a_proc['Close'].iloc[-1])
-                        a_signal = int(a_proc['Predicted_Signal'].iloc[-1])
-                        alarm["last_price"] = a_price
-                        
-                        if alarm["last_signal"] != a_signal:
-                            action = ""
-                            if a_signal == 1 and alarm["balance"] > 0:
-                                alarm["crypto_amount"] = alarm["balance"] / a_price
-                                action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
-                                alarm["balance"] = 0.0
-                            elif a_signal == 0 and alarm["crypto_amount"] > 0:
-                                alarm["balance"] = alarm["crypto_amount"] * a_price
-                                action = f"🔴 SATIM YAPILDI: Nakte geçildi."
-                                alarm["crypto_amount"] = 0.0
-                            
-                            alarm["last_signal"] = a_signal
-                            
-                            if action and bot_token and chat_id:
-                                cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
-                                msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
-                                send_telegram_signal(bot_token, chat_id, msg)
-                                st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
-                except:
-                    pass
+        alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
+        alarm_raw = get_crypto_data(alm_symbol, period_mapping[alarm["period"]], interval_mapping[alarm["interval"]])
+        
+        if not alarm_raw.empty and len(alarm_raw) > 20:
+            try:
+                alarm_raw['Return'] = alarm_raw['Close'].pct_change()
+                alarm_raw['RSI'] = vbt.RSI.run(alarm_raw['Close'], window=14).rsi
+                alarm_raw['SMA_20'] = vbt.MA.run(alarm_raw['Close'], window=20).ma
+                alarm_raw['Price_to_SMA'] = alarm_raw['Close'] / alarm_raw['SMA_20']
+                alarm_raw['Signal_Target'] = (alarm_raw['Close'].shift(-1) > alarm_raw['Close']).astype(int)
+                alarm_raw.dropna(inplace=True)
+                
+                a_X = alarm_raw[['Return', 'RSI', 'Price_to_SMA']]
+                a_model = RandomForestClassifier(random_state=42, n_estimators=50)
+                a_model.fit(a_X, alarm_raw['Signal_Target'])
+                
+                a_price = float(alarm_raw['Close'].iloc[-1])
+                a_signal = int(a_model.predict(a_X.iloc[[-1]]))
+                alarm["last_price"] = a_price
+                
+                if alarm["last_signal"] != a_signal:
+                    action = ""
+                    if a_signal == 1 and alarm["balance"] > 0:
+                        alarm["crypto_amount"] = alarm["balance"] / a_price
+                        action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
+                        alarm["balance"] = 0.0
+                    elif a_signal == 0 and alarm["crypto_amount"] > 0:
+                        alarm["balance"] = alarm["crypto_amount"] * a_price
+                        action = f"🔴 SATIM YAPILDI: Nakte geçildi."
+                        alarm["crypto_amount"] = 0.0
+                    
+                    alarm["last_signal"] = a_signal
+                    
+                    if action and bot_token and chat_id:
+                        cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
+                        msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
+                        send_telegram_signal(bot_token, chat_id, msg)
+                        st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
+            except:
+                pass
 
-        # --- SEKMELİ ÖN YÜZ TASARIMI ---
-        tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
+    # --- SEKMELİ ÖN YÜZ TASARIMI ---
+    tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
-        with tab1:
-            st.write(f"### 📈 {ticker} Strateji Analiz Paneli")
-            
-            # YENİ TASARIM: Grafik ve istatistik yerleşimi tam uyumlu hale getirildi
-            st.write("#### 🕯️ İnteraktif Mum Grafiği")
-            fig = go.Figure(data=[go.Candlestick(
-                x=processed_df.index, open=processed_df['Open'], high=processed_df['High'], low=processed_df['Low'], close=processed_df['Close'], name=ticker
-            )])
-            fig.update_layout(xaxis_rangeslider_visible=False, height=500, template="plotly_dark")
-            st.plotly_chart(fig, width="stretch")
-
-            st.markdown("---")
-            st.write("#### 📊 Geçmiş Dönem Performans Sonuçları")
-            
-            total_ret = portfolio.total_return() * 100
+    with tab1:
+        st.write(f"### 📈 {ticker} Strateji Analiz Paneli")
+        
+        st.write("#### 🕯️ İnteraktif Mum Grafiği")
+        fig = go.Figure(data=[go.Candlestick(
