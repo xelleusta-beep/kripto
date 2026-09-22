@@ -5,25 +5,28 @@ import plotly.graph_objects as go
 import requests
 import io
 import ccxt
+import warnings
+warnings.filterwarnings('ignore')
 
-# 1. Sayfa Konfigürasyonu
+# Sayfa ayarları
 st.set_page_config(layout="wide", page_title="Yapay Zeka Çoklu Otomasyon Paneli")
-st.title("🤖 ML Kripto Backtest & Çoklu Canlı MEXC Alarm Yönetim Platformu")
 
-# --- OTURUM BELLEĞİ (SESSION STATE) ---
+# Session State Tanımlamaları
 if "alarms" not in st.session_state:
-    st.session_state.alarms = [] 
+    st.session_state.alarms = []
 if "global_trade_history" not in st.session_state:
     st.session_state.global_trade_history = []
 
 # --- 1. TELEGRAM BİLDİRİM FONKSİYONU ---
 def send_telegram_signal(token, chat_id, message):
+    if not token or not chat_id:
+        return False
     try:
         url = f"https://telegram.org{token}/sendMessage"
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-        response = requests.post(url, json=payload, timeout=5)
+        response = requests.post(url, json=payload, timeout=10)
         return response.status_code == 200
-    except:
+    except Exception:
         return False
 
 # --- 2. GÜVENLİ VERİ ÇEKME FONKSİYONU ---
@@ -36,20 +39,25 @@ def get_crypto_data(symbol_name, prd_days, inv_str):
         limit_mapping = {"7 Gün": 200, "30 Gün": 750, "2 Ay": 1000, "1 Yıl": 1000, "3 Yıl": 1500}
         safe_limit = limit_mapping.get(prd_days, 500)
         ohlcv = exchange.fetch_ohlcv(symbol_name, timeframe=inv_str, limit=safe_limit)
-        
-        if ohlcv and len(ohlcv) > 20:
+
+        # HATA DÜZELTMESİ: ohlcv None kontrolü güvenli hale getirildi
+        if ohlcv is not None and len(ohlcv) > 20:
             df_res = pd.DataFrame(ohlcv, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
             df_res['Timestamp'] = pd.to_datetime(df_res['Timestamp'], unit='ms')
             df_res.set_index('Timestamp', inplace=True)
             return df_res[['Open', 'High', 'Low', 'Close']]
         return pd.DataFrame()
     except Exception as e:
-        st.session_state.global_trade_history.append(f"⚠️ Veri Çekme Hatası ({symbol_name}): {str(e)}")
+        if "global_trade_history" in st.session_state:
+            st.session_state.global_trade_history.append(f"⚠️ Veri Çekme Hatası ({symbol_name}): {str(e)}")
         return pd.DataFrame()
 
 # --- 3. PANDAS BACKTEST MATEMATİK MOTORU ---
 def compute_strategy_performance(df_input, train_ratio):
     try:
+        if df_input.empty or len(df_input) < 25:
+            return None, 0.0, 10000.0, pd.DataFrame(), 0
+
         from sklearn.ensemble import RandomForestClassifier
         working_df = df_input.copy()
         working_df['Return'] = working_df['Close'].pct_change()
@@ -64,12 +72,12 @@ def compute_strategy_performance(df_input, train_ratio):
 
         X = working_df[['Return', 'RSI', 'Price_to_SMA']]
         y = working_df['Signal_Target']
-        
+
         model = RandomForestClassifier(random_state=42, n_estimators=50)
         split_idx = int(len(X) * (train_ratio / 100))
         if split_idx == 0 or split_idx >= len(X):
             split_idx = int(len(X) * 0.8)
-            
+
         model.fit(X[:split_idx], y[:split_idx])
         working_df['Predicted_Signal'] = model.predict(X)
 
@@ -80,6 +88,7 @@ def compute_strategy_performance(df_input, train_ratio):
         init_cash = 10000.0
         cash = init_cash
         units = 0.0
+        last_entry_cost = 0.0 # Giriş maliyetini tutmak için eklendi
 
         for i in range(len(working_df)):
             c_date = working_df.index[i]
@@ -87,6 +96,7 @@ def compute_strategy_performance(df_input, train_ratio):
             c_sig = int(working_df['Predicted_Signal'].iloc[i])
 
             if c_sig == 1 and not in_pos:
+                last_entry_cost = cash # Pozisyona girerken kasadaki net para
                 units = (cash / c_price) * 0.999
                 ent_price = c_price
                 ent_date = c_date
@@ -94,7 +104,8 @@ def compute_strategy_performance(df_input, train_ratio):
                 in_pos = True
             elif c_sig == 0 and in_pos:
                 cash = (units * c_price) * 0.999
-                pnl = cash - init_cash if len(trade_logs) == 0 else cash - (init_cash + sum([t['Net Kâr/Zarar ($)'] for t in trade_logs]))
+                # HATA DÜZELTMESİ: Matematiksel PnL hesabı düzeltildi
+                pnl = cash - last_entry_cost 
                 ret_pct = ((c_price - ent_price) / ent_price) * 100
                 trade_logs.append({
                     "İşlem ID": len(trade_logs) + 1,
@@ -115,24 +126,34 @@ def compute_strategy_performance(df_input, train_ratio):
         latest_signal_out = int(working_df['Predicted_Signal'].iloc[-1])
 
         return working_df, total_ret_pct, final_val, pd.DataFrame(trade_logs), latest_signal_out
-    except:
+    except Exception as e:
+        st.error(f"Hesaplama hatası: {str(e)}")
         return None, 0.0, 10000.0, pd.DataFrame(), 0
 
 # --- 4. GRAFİK OLUŞTURMA FONKSİYONU ---
 def build_candlestick_chart(data_df, label_text):
     try:
+        if data_df.empty:
+            return None
         candles = go.Candlestick(
-            x=data_df.index, 
-            open=data_df['Open'], 
-            high=data_df['High'], 
-            low=data_df['Low'], 
-            close=data_df['Close'], 
+            x=data_df.index,
+            open=data_df['Open'],
+            high=data_df['High'],
+            low=data_df['Low'],
+            close=data_df['Close'],
             name=label_text
         )
         fig_obj = go.Figure(data=[candles])
-        fig_obj.update_layout(xaxis_rangeslider_visible=False, height=450, template="plotly_dark")
+        fig_obj.update_layout(
+            xaxis_rangeslider_visible=False,
+            height=450,
+            template="plotly_dark",
+            title=label_text
+        )
+        fig_obj.update_xaxes(title_text='Zaman')
+        fig_obj.update_yaxes(title_text='Fiyat (USDT)')
         return fig_obj
-    except:
+    except Exception:
         return None
 
 # --- 5. CANLI ALARMLARI İŞLEYEN FONKSİYON ---
@@ -143,11 +164,11 @@ def process_live_alarms(b_token, c_id):
         if not alarm["is_active"]:
             continue
         alarm_raw = get_crypto_data(alarm["ticker"], alarm["period"], alarm["interval"])
-        if alarm_raw.empty or len(alarm_raw) < 10:
+        if alarm_raw.empty or len(alarm_raw) < 25:
             continue
         try:
             res = compute_strategy_performance(alarm_raw, 80)
-            if res is not None:
+            if res[0] is not None:
                 _, _, _, _, a_signal = res
                 a_price = float(alarm_raw['Close'].iloc[-1])
                 alarm["last_price"] = a_price
@@ -167,19 +188,19 @@ def process_live_alarms(b_token, c_id):
                         msg = f"⚡ *MEXC ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
                         send_telegram_signal(b_token, c_id, msg)
                         st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
-        except:
-            pass
+        except Exception as e:
+            st.session_state.global_trade_history.append(f"Alarm işleme hatası: {str(e)}")
 
 # --- 6. ARAYÜZ BİLEŞENLERİ PANELİ ---
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
-bot_token = st.sidebar.text_input("Telegram Bot Token", type="password")
-chat_id = st.sidebar.text_input("Telegram Chat ID", type="password")
+bot_token = st.sidebar.text_input("Telegram Bot Token", type="password", key="tg_token")
+chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", key="tg_chat_id")
 
 st.sidebar.markdown("---")
 st.sidebar.header("🔍 2. Kripto Seçimi & Backtest Ayarları")
 
 crypto_list = [
-    "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT", 
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "BNB/USDT",
     "ADA/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT", "MATIC/USDT",
     "DOGE/USDT", "SHIB/USDT", "NEAR/USDT", "SUI/USDT", "LTC/USDT"
 ]
@@ -188,8 +209,6 @@ ticker = st.sidebar.selectbox("Kripto Para Seçin (MEXC Canlı)", crypto_list)
 interval_label = st.sidebar.selectbox("Veri Sıklığı (Grafik Mum Tipi)", ["1 Saat", "1 Gün"])
 
 interval_mapping = {"1 Saat": "1h", "1 Gün": "1d"}
-period_mapping = {"7 Gün": "7d", "30 Gün": "30d", "2 Ay": "2mo", "1 Yıl": "1y", "3 Yıl": "3y"}
-
 time_period = st.sidebar.selectbox("Geçmiş Test Süresi", ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"], index=3)
 train_size = st.sidebar.slider("Yapay Zeka Eğitim Verisi Oranı (%)", 50, 90, 80)
 
@@ -198,25 +217,15 @@ st.sidebar.header("🚨 3. Alarm Oluşturma")
 alarm_init_balance = st.sidebar.number_input("Bu Alarma Özel Başlangıç Bakiyesi ($)", min_value=10.0, value=1000.0, step=100.0)
 
 if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_width=True):
-    new_alarm = {
-        "id": len(st.session_state.alarms) + 1, "ticker": ticker, "interval": interval_mapping[interval_label], "period": time_period,
-        "balance": float(alarm_init_balance), "crypto_amount": 0.0, "last_signal": None, "last_price": 0.0, "is_active": True
-    }
-    st.session_state.alarms.append(new_alarm)
-    st.sidebar.success(f"Başarılı! {ticker} MEXC alarm havuzuna eklendi.")
-
-# --- SEKMELİ ÖN YÜZ TANIMLAMASI ---
-tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
-
-# --- VERİ VE STRATEJİ AKIŞI (TAMAMEN DOĞRUSAL, KOŞUL BLOKLARINDAN BAĞIMSIZ) ---
-raw_df = get_crypto_data(ticker, time_period, interval_mapping[interval_label])
-
-# HESAPLAMALAR TAMAMEN BAĞIMSIZ DOĞRUSAL ALANA ALINDI
-processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
-process_live_alarms(bot_token, chat_id)
-
-# --- SEKME 1: BACKTEST VE ANALİZ ALANI ---
-with tab1:
-    st.write(f"### 📈 {ticker} MEXC Canlı Strateji Analiz Paneli")
-    
-    # Tüm IF-ELSE yapısını tamamen kaldırıp düz metin kontrolü yapıyoruz (Girinti hatasını sıfırlar)
+    if not any(a["ticker"] == ticker and a["interval"] == interval_mapping[interval_label] for a in st.session_state.alarms):
+        new_alarm = {
+            "id": len(st.session_state.alarms) + 1,
+            "ticker": ticker,
+            "interval": interval_mapping[interval_label],
+            "period": time_period,
+            "balance": float(alarm_init_balance),
+            "crypto_amount": 0.0,
+            "last_signal": 0,
+            "last_price": 0.0,
+            "is_active": True
+        }
