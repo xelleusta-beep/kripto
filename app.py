@@ -203,16 +203,15 @@ else:
         st.markdown("---")
         st.write("### 📜 Yapay Zekanın Geçmiş Tüm İşlemlerinin Detaylı Listesi (Trade Logs)")
         
-        # YENİ ÖZELLİK: Vectorbt içerisinden işlem dökümlerini çekme
         try:
             trades_df = portfolio.trades.records_df
             if not trades_df.empty:
-                # İndeksleri gerçek tarih formatına dönüştürme ve anlaşılır kılma
                 trades_df['Giriş Tarihi'] = df.index[trades_df['entry_idx']]
                 trades_df['Çıkış Tarihi'] = df.index[trades_df['exit_idx']]
                 
-                # Sütunları Türkçeleştirme ve düzenleme
-                backtest_logs = pd.DataFrame({
-                    "İşlem ID": trades_df['id'] + 1,
-                    "Giriş Tarihi": trades_df['Giriş Tarihi'].dt.strftime('%Y-%m-%d %H:%M'),
-                    "Çıkış Tarihi": trades_df['Çıkış Tarihi'].dt.strftime('%Y-%m-%d %H:%M'),
+                # SÖZDİZİMİ HATASI DÜZELTİLEN GÜVENLİ VERİ YAPISI
+                backtest_logs = pd.DataFrame()
+                backtest_logs["İşlem ID"] = trades_df['id'] + 1
+                backtest_logs["Giriş Tarihi"] = trades_df['Giriş Tarihi'].dt.strftime('%Y-%m-%d %H:%M')
+                backtest_logs["Çıkış Tarihi"] = trades_df['Çıkış Tarihi'].dt.strftime('%Y-%m-%d %H:%M')
+                backtest_logs["Giriş Fiyatı ($)"] = trades_df['entry_price'].round(4)
