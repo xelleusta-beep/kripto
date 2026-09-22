@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import requests
 import io
 import ccxt
+import traceback  # Hata detaylarını yakalamak için eklenen kütüphane
 from sklearn.ensemble import RandomForestClassifier
 
 # 1. Sayfa Konfigürasyonu
@@ -24,23 +25,22 @@ def send_telegram_signal(token, chat_id, message):
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
         response = requests.post(url, json=payload, timeout=5)
         return response.status_code == 200
-    except:
+    except Exception as e:
+        st.session_state.global_trade_history.append(f"⚠️ Telegram Hatası: {str(e)}")
         return False
 
-# --- 2. KESİN VE CANLI ÇÖZÜM: MEXC BORSASI VERİ MOTORU ---
+# --- 2. GÜVENLİ VERİ ÇEKME FONKSİYONU ---
 def get_crypto_data(symbol_name, prd_days, inv_str):
     try:
-        # MEXC borsasına doğrudan kurumsal bağlantı
+        # MEXC borsasına bağlantı denemesi
         exchange = ccxt.mexc({
             'enableRateLimit': True,
             'options': {'defaultType': 'spot'}
         })
         
-        # Gün ayarlarına göre MEXC'den çekilecek maksimum mum limiti
         limit_mapping = {"7 Gün": 200, "30 Gün": 750, "2 Ay": 1000, "1 Yıl": 1000, "3 Yıl": 1500}
         safe_limit = limit_mapping.get(prd_days, 500)
         
-        # %100 Gerçek ve Canlı Mum Verilerini Çekme
         ohlcv = exchange.fetch_ohlcv(symbol_name, timeframe=inv_str, limit=safe_limit)
         
         if ohlcv and len(ohlcv) > 20:
@@ -50,96 +50,92 @@ def get_crypto_data(symbol_name, prd_days, inv_str):
             return df_res[['Open', 'High', 'Low', 'Close']]
             
         return pd.DataFrame()
-    except:
-        # Bağlantı koparsa boş döner ve arayüze uyarı basar (Simülasyon motoru kaldırıldı)
+    except Exception as e:
+        # Hata anında log kaydı düşüyoruz
+        st.session_state.global_trade_history.append(f"⚠️ Veri Çekme Hatası ({symbol_name}): {str(e)}")
         return pd.DataFrame()
 
 # --- 3. PANDAS BACKTEST MATEMATİK MOTORU ---
 def compute_strategy_performance(df_input, train_ratio):
-    try:
-        working_df = df_input.copy()
-        working_df['Return'] = working_df['Close'].pct_change()
-        working_df['RSI'] = vbt.RSI.run(working_df['Close'], window=14).rsi
-        working_df['SMA_20'] = vbt.MA.run(working_df['Close'], window=20).ma
-        working_df['Price_to_SMA'] = working_df['Close'] / working_df['SMA_20']
-        working_df['Signal_Target'] = (working_df['Close'].shift(-1) > working_df['Close']).astype(int)
-        working_df.dropna(inplace=True)
+    # Hata gizlemeyi kaldırdık, hata varsa doğrudan üst katmana fırlatacak
+    working_df = df_input.copy()
+    working_df['Return'] = working_df['Close'].pct_change()
+    working_df['RSI'] = vbt.RSI.run(working_df['Close'], window=14).rsi
+    working_df['SMA_20'] = vbt.MA.run(working_df['Close'], window=20).ma
+    working_df['Price_to_SMA'] = working_df['Close'] / working_df['SMA_20']
+    working_df['Signal_Target'] = (working_df['Close'].shift(-1) > working_df['Close']).astype(int)
+    working_df.dropna(inplace=True)
 
-        if len(working_df) < 10:
-            return None, 0.0, 10000.0, pd.DataFrame(), 0
-
-        X = working_df[['Return', 'RSI', 'Price_to_SMA']]
-        y = working_df['Signal_Target']
-        
-        model = RandomForestClassifier(random_state=42, n_estimators=50)
-        split_idx = int(len(X) * (train_ratio / 100))
-        if split_idx == 0 or split_idx >= len(X):
-            split_idx = int(len(X) * 0.8)
-            
-        model.fit(X[:split_idx], y[:split_idx])
-        working_df['Predicted_Signal'] = model.predict(X)
-
-        trade_logs = []
-        in_pos = False
-        ent_price = 0.0
-        ent_date = None
-        init_cash = 10000.0
-        cash = init_cash
-        units = 0.0
-
-        for i in range(len(working_df)):
-            c_date = working_df.index[i]
-            c_price = float(working_df['Close'].iloc[i])
-            c_sig = int(working_df['Predicted_Signal'].iloc[i])
-
-            if c_sig == 1 and not in_pos:
-                units = (cash / c_price) * 0.999
-                ent_price = c_price
-                ent_date = c_date
-                cash = 0.0
-                in_pos = True
-            elif c_sig == 0 and in_pos:
-                cash = (units * c_price) * 0.999
-                pnl = cash - init_cash if len(trade_logs) == 0 else cash - (init_cash + sum([t['Net Kâr/Zarar ($)'] for t in trade_logs]))
-                ret_pct = ((c_price - ent_price) / ent_price) * 100
-                trade_logs.append({
-                    "İşlem ID": len(trade_logs) + 1,
-                    "Giriş Tarihi": ent_date.strftime('%Y-%m-%d %H:%M'),
-                    "Çıkış Tarihi": c_date.strftime('%Y-%m-%d %H:%M'),
-                    "Giriş Fiyatı ($)": round(ent_price, 4),
-                    "Çıkış Fiyatı ($)": round(c_price, 4),
-                    "Miktar (Adet)": round(units, 6),
-                    "Net Kâr/Zarar ($)": round(pnl, 2),
-                    "Getiri (%)": f"{ret_pct:.2f}%"
-                })
-                units = 0.0
-                in_pos = False
-
-        c_last_price = float(working_df['Close'].iloc[-1])
-        final_val = cash if not in_pos else (units * c_last_price)
-        total_ret_pct = ((final_val - init_cash) / init_cash) * 100
-        latest_signal_out = int(working_df['Predicted_Signal'].iloc[-1])
-
-        return working_df, total_ret_pct, final_val, pd.DataFrame(trade_logs), latest_signal_out
-    except:
+    if len(working_df) < 10:
         return None, 0.0, 10000.0, pd.DataFrame(), 0
+
+    X = working_df[['Return', 'RSI', 'Price_to_SMA']]
+    y = working_df['Signal_Target']
+    
+    model = RandomForestClassifier(random_state=42, n_estimators=50)
+    split_idx = int(len(X) * (train_ratio / 100))
+    if split_idx == 0 or split_idx >= len(X):
+        split_idx = int(len(X) * 0.8)
+        
+    model.fit(X[:split_idx], y[:split_idx])
+    working_df['Predicted_Signal'] = model.predict(X)
+
+    trade_logs = []
+    in_pos = False
+    ent_price = 0.0
+    ent_date = None
+    init_cash = 10000.0
+    cash = init_cash
+    units = 0.0
+
+    for i in range(len(working_df)):
+        c_date = working_df.index[i]
+        c_price = float(working_df['Close'].iloc[i])
+        c_sig = int(working_df['Predicted_Signal'].iloc[i])
+
+        if c_sig == 1 and not in_pos:
+            units = (cash / c_price) * 0.999
+            ent_price = c_price
+            ent_date = c_date
+            cash = 0.0
+            in_pos = True
+        elif c_sig == 0 and in_pos:
+            cash = (units * c_price) * 0.999
+            pnl = cash - init_cash if len(trade_logs) == 0 else cash - (init_cash + sum([t['Net Kâr/Zarar ($)'] for t in trade_logs]))
+            ret_pct = ((c_price - ent_price) / ent_price) * 100
+            trade_logs.append({
+                "İşlem ID": len(trade_logs) + 1,
+                "Giriş Tarihi": ent_date.strftime('%Y-%m-%d %H:%M'),
+                "Çıkış Tarihi": c_date.strftime('%Y-%m-%d %H:%M'),
+                "Giriş Fiyatı ($)": round(ent_price, 4),
+                "Çıkış Fiyatı ($)": round(c_price, 4),
+                "Miktar (Adet)": round(units, 6),
+                "Net Kâr/Zarar ($)": round(pnl, 2),
+                "Getiri (%)": f"{ret_pct:.2f}%"
+            })
+            units = 0.0
+            in_pos = False
+
+    c_last_price = float(working_df['Close'].iloc[-1])
+    final_val = cash if not in_pos else (units * c_last_price)
+    total_ret_pct = ((final_val - init_cash) / init_cash) * 100
+    latest_signal_out = int(working_df['Predicted_Signal'].iloc[-1])
+
+    return working_df, total_ret_pct, final_val, pd.DataFrame(trade_logs), latest_signal_out
 
 # --- 4. GRAFİK OLUŞTURMA FONKSİYONU ---
 def build_candlestick_chart(data_df, label_text):
-    try:
-        candles = go.Candlestick(
-            x=data_df.index, 
-            open=data_df['Open'], 
-            high=data_df['High'], 
-            low=data_df['Low'], 
-            close=data_df['Close'], 
-            name=label_text
-        )
-        fig_obj = go.Figure(data=[candles])
-        fig_obj.update_layout(xaxis_rangeslider_visible=False, height=450, template="plotly_dark")
-        return fig_obj
-    except:
-        return None
+    candles = go.Candlestick(
+        x=data_df.index, 
+        open=data_df['Open'], 
+        high=data_df['High'], 
+        low=data_df['Low'], 
+        close=data_df['Close'], 
+        name=label_text
+    )
+    fig_obj = go.Figure(data=[candles])
+    fig_obj.update_layout(xaxis_rangeslider_visible=False, height=450, template="plotly_dark")
+    return fig_obj
 
 # --- 5. CANLI ALARMLARI İŞLEYEN FONKSİYON ---
 def process_live_alarms(b_token, c_id):
@@ -171,8 +167,8 @@ def process_live_alarms(b_token, c_id):
                     msg = f"⚡ *MEXC ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
                     send_telegram_signal(b_token, c_id, msg)
                     st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
-        except:
-            pass
+        except Exception as alarm_err:
+            st.session_state.global_trade_history.append(f"⚠️ Alarm İşleme Hatası ({alarm['ticker']}): {str(alarm_err)}")
 
 # --- 6. ARAYÜZ BİLEŞENLERİ PANELİ ---
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
@@ -211,16 +207,19 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
 # --- SEKMELİ ÖN YÜZ HIERARŞİSİ ---
 tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
-# MEXC Borsasından Canlı Verileri Çekme Tetikleyicisi
-raw_df = get_crypto_data(ticker, time_period, interval_mapping[interval_label])
+# ANALİZ VE ÇİZİM BLOKLARI (GELİŞMİŞ HATA TAKİP SİSTEMİ)
+try:
+    raw_df = get_crypto_data(ticker, time_period, interval_mapping[interval_label])
 
-if raw_df.empty or len(raw_df) < 10:
-    with tab1:
-        st.error("⚠️ MEXC API bağlantı hatası veya veri kümesi boş döndü! Lütfen kısa bir süre sonra sayfayı yenileyin veya farklı bir coin/zaman periyodu seçin.")
-else:
-    processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
-    process_live_alarms(bot_token, chat_id)
+    if raw_df.empty:
+        with tab1:
+            st.error("❌ MEXC Borsasından ham veri kümesi boş döndü! Lütfen internet bağlantınızı kontrol edin veya sol panelden periyodu değiştirin.")
+    else:
+        # Hesaplama fonksiyonunu çalıştır
+        processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
+        process_live_alarms(bot_token, chat_id)
 
-    # TAB 1 İÇERİĞİ 
-    with tab1:
-        st.write(f"### 📈 {ticker} MEXC Canlı Strateji Analiz Paneli")
+        # TAB 1 İÇERİĞİ ÇİZİMİ
+        with tab1:
+            st.write(f"### 📈 {ticker} MEXC Canlı Strateji Analiz Paneli")
+            st.write("#### 🕯️ İnteraktif Mum Grafiği")
