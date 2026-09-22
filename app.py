@@ -195,12 +195,14 @@ try:
                 c3.write(f"⏱️ {alm['interval']}")
                 live_val = alm['balance'] if alm['balance'] > 0 else (alm['crypto_amount'] * alm['last_price'])
                 c4.write(f"💰 Kasa: **${live_val:,.2f}**")
+                
                 if alm['last_signal'] == 1:
                     c5.success("🤖 Sinyal: AL")
                 elif alm['last_signal'] == 0:
                     c5.error("🤖 Sinyal: SAT")
                 else:
                     c5.warning("⏳ Hesaplanıyor")
+                    
                 alm["is_active"] = c6.toggle("Açık", value=alm["is_active"], key=f"tgl_{idx}")
                 if c7.button("🗑️", key=f"del_{idx}"):
                     st.session_state.alarms.pop(idx)
@@ -208,9 +210,7 @@ try:
             
             st.markdown("---")
             
-            # --- TAMAMEN HİZALANMIŞ TABLO RAPORMA KATMANI ---
+            # --- HATALI IF ELSE BLOKLARI TEK SATIRA İNDİRGENEREK KESİN ÇÖZÜM SAĞLANDI ---
             report_data = []
             for a in st.session_state.alarms:
                 calculated_balance = a['balance'] if a['balance'] > 0 else (a['crypto_amount'] * a['last_price'])
-                signal_status = "Belirsiz"
-                if a["last_signal"] == 1:
