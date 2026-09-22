@@ -19,7 +19,7 @@ if "global_trade_history" not in st.session_state:
 # --- YARDIMCI FONKSİYONLAR ---
 def send_telegram_signal(token, chat_id, message):
     try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        url = f"https://telegram.org{token}/sendMessage"
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
         response = requests.post(url, json=payload, timeout=5)
         return response.status_code == 200
@@ -101,13 +101,12 @@ period_mapping = {"7 Gün": "7d", "30 Gün": "30d", "2 Ay": "2mo", "1 Yıl": "1y
 
 time_period = st.sidebar.selectbox(
     "Geçmiş Test Süresi", 
-    ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"],
-    index=["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"].index(
-        "7 Gün" if interval_label == "1 Dakika" else 
-        "30 Gün" if "Dakika" in interval_label else 
-        "2 Ay" if interval_label == "1 Saat" else "1 Yıl"
-    )
+    ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Year"],
+    index=1 if "Dakika" in interval_label else 3
 )
+
+# Yahoo finance period kelime uyumu düzeltmesi
+safe_period_str = "3y" if time_period == "3 Year" else period_mapping.get(time_period, "30d")
 
 train_size = st.sidebar.slider("Yapay Zeka Eğitim Verisi Oranı (%)", 50, 90, 80)
 
@@ -132,7 +131,7 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
 
 # --- ANA PROGRAM AKIŞI ---
 symbol = ticker.replace("/", "-").replace("USDT", "USD")
-raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[interval_label])
+raw_df = get_crypto_data(symbol, safe_period_str, interval_mapping[interval_label])
 
 if raw_df.empty or len(raw_df) < 20:
     st.error("Seçili borsa verisi yüklenemedi. Lütfen zaman ayarlarını değiştirin.")
@@ -147,33 +146,37 @@ else:
                 continue
             
             alm_symbol = alarm["ticker"].replace("/", "-").replace("USDT", "USD")
-            alarm_raw = get_crypto_data(alm_symbol, period_mapping[alarm["period"]], interval_mapping[alarm["interval"]])
+            alm_period_safe = "3y" if alarm["period"] == "3 Year" else period_mapping.get(alarm["period"], "30d")
+            alarm_raw = get_crypto_data(alm_symbol, alm_period_safe, interval_mapping[alarm["interval"]])
             
             if not alarm_raw.empty and len(alarm_raw) > 20:
-                a_proc, _ = run_ml_and_backtest(alarm_raw, 80)
-                if a_proc is not None:
-                    a_price = float(a_proc['Close'].iloc[-1])
-                    a_signal = int(a_proc['Predicted_Signal'].iloc[-1])
-                    alarm["last_price"] = a_price
-                    
-                    if alarm["last_signal"] != a_signal:
-                        action = ""
-                        if a_signal == 1 and alarm["balance"] > 0:
-                            alarm["crypto_amount"] = alarm["balance"] / a_price
-                            action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
-                            alarm["balance"] = 0.0
-                        elif a_signal == 0 and alarm["crypto_amount"] > 0:
-                            alarm["balance"] = alarm["crypto_amount"] * a_price
-                            action = f"🔴 SATIM YAPILDI: Nakte geçildi."
-                            alarm["crypto_amount"] = 0.0
+                try:
+                    a_proc, _ = run_ml_and_backtest(alarm_raw, 80)
+                    if a_proc is not None:
+                        a_price = float(a_proc['Close'].iloc[-1])
+                        a_signal = int(a_proc['Predicted_Signal'].iloc[-1])
+                        alarm["last_price"] = a_price
                         
-                        alarm["last_signal"] = a_signal
-                        
-                        if action and bot_token and chat_id:
-                            cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
-                            msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
-                            send_telegram_signal(bot_token, chat_id, msg)
-                            st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
+                        if alarm["last_signal"] != a_signal:
+                            action = ""
+                            if a_signal == 1 and alarm["balance"] > 0:
+                                alarm["crypto_amount"] = alarm["balance"] / a_price
+                                action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
+                                alarm["balance"] = 0.0
+                            elif a_signal == 0 and alarm["crypto_amount"] > 0:
+                                alarm["balance"] = alarm["crypto_amount"] * a_price
+                                action = f"🔴 SATIM YAPILDI: Nakte geçildi."
+                                alarm["crypto_amount"] = 0.0
+                            
+                            alarm["last_signal"] = a_signal
+                            
+                            if action and bot_token and chat_id:
+                                cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
+                                msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
+                                send_telegram_signal(bot_token, chat_id, msg)
+                                st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
+                except:
+                    pass
 
         # --- SEKMELİ ÖN YÜZ TASARIMI ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
@@ -202,15 +205,13 @@ else:
             st.markdown("---")
             st.write("### 📜 Yapay Zekanın Geçmiş Tüm İşlemlerinin Detaylı Listesi (Trade Logs)")
             
-            trades_df = portfolio.trades.records_df
-            if not trades_df.empty:
-                entry_dates = processed_df.index[trades_df['entry_idx']]
-                exit_dates = processed_df.index[trades_df['exit_idx']]
-                
-                backtest_logs = pd.DataFrame()
-                backtest_logs["İşlem ID"] = trades_df['id'] + 1
-                backtest_logs["Giriş Tarihi"] = entry_dates.strftime('%Y-%m-%d %H:%M')
-                backtest_logs["Çıkış Tarihi"] = exit_dates.strftime('%Y-%m-%d %H:%M')
-                backtest_logs["Giriş Fiyatı ($)"] = trades_df['entry_price'].round(4)
-                backtest_logs["Çıkış Fiyatı ($)"] = trades_df['exit_price'].round(4)
-                backtest_logs["Miktar (Adet)"] = trades_df['size'].round(6)
+            try:
+                # KESİN ÇÖZÜM: records_df yerine to_df() fonksiyonu kullanıldı
+                trades_df = portfolio.trades.to_df()
+                if not trades_df.empty:
+                    entry_dates = processed_df.index[trades_df['Entry Index']]
+                    exit_dates = processed_df.index[trades_df['Exit Index']]
+                    
+                    backtest_logs = pd.DataFrame()
+                    backtest_logs["İşlem ID"] = trades_df['Trade ID'] + 1
+                    backtest_logs["Giriş Tarihi"] = entry_dates.strftime('%Y-%m-%d %H:%M')
