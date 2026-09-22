@@ -5,3 +5,4 @@ scikit-learn
 ccxt
 plotly==5.18.0
 yfinance
+openpyxl
