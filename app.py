@@ -76,7 +76,7 @@ def run_ml_and_backtest(df_input, train_ratio):
     except:
         return None, None
 
-# --- FONKSİYON 4: KESİN ÇÖZÜM - İŞLEM GEÇMİŞİ TABLOSU OLUŞTURMA ---
+# --- FONKSİYON 4: İŞLEM GEÇMİŞİ TABLOSU OLUŞTURMA ---
 def build_trade_logs_df(portfolio_obj, processed_df_obj):
     try:
         trades_df = portfolio_obj.trades.to_df()
@@ -208,16 +208,16 @@ else:
 
         with tab1:
             st.write(f"### 📈 {ticker} Strateji Analiz Paneli")
-            col1, col2 = st.columns(2)
             
-            with col1:
-                st.write("#### 🕯️ İnteraktif Mum Grafiği")
-                fig = go.Figure(data=[go.Candlestick(
-                    x=processed_df.index, open=processed_df['Open'], high=processed_df['High'], low=processed_df['Low'], close=processed_df['Close'], name=ticker
-                )])
-                fig.update_layout(xaxis_rangeslider_visible=False, height=450, template="plotly_dark")
-                st.plotly_chart(fig, width="stretch")
+            # YENİ TASARIM: Grafik ve istatistik yerleşimi tam uyumlu hale getirildi
+            st.write("#### 🕯️ İnteraktif Mum Grafiği")
+            fig = go.Figure(data=[go.Candlestick(
+                x=processed_df.index, open=processed_df['Open'], high=processed_df['High'], low=processed_df['Low'], close=processed_df['Close'], name=ticker
+            )])
+            fig.update_layout(xaxis_rangeslider_visible=False, height=500, template="plotly_dark")
+            st.plotly_chart(fig, width="stretch")
 
-            with col2:
-                st.write("#### 📊 Geçmiş Dönem Performans Sonuçları")
-                total_ret = portfolio.total_return() * 100
+            st.markdown("---")
+            st.write("#### 📊 Geçmiş Dönem Performans Sonuçları")
+            
+            total_ret = portfolio.total_return() * 100
