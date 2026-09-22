@@ -14,17 +14,15 @@ train_size = st.sidebar.slider("Model Eğitim Verisi (%)", 50, 90, 80)
 
 st.write(f"### {ticker} Verileri ve Yapay Zeka Analizi")
 
-# 3. Arka Plan: Veri Çekme (Simüle edilmiş veri, CCXT ile borsadan da çekilebilir)
-# Gerçek senaryoda buraya veri çekme fonksiyonu eklenir.
-# 3. Arka Plan: Veri Çekme (Yahoo Finance için Ticker formatı düzeltildi)
+# 3. Arka Plan: Veri Çekme ve Temizleme
 symbol = ticker.replace("/", "-")
 if "USDT" in symbol:
-    symbol = symbol.replace("USDT", "USD") # Yahoo Finance BTC-USD kullanır
+    symbol = symbol.replace("USDT", "USD") # Yahoo Finance formatı
 
-# Veriyi indir ve sadece kapanış fiyatını (Close) temiz bir Seri olarak al
+# Veriyi indir ve sadece kapanış fiyatını al
 data = vbt.YFData.download(symbol, period="1y").get('Close')
 
-# Eğer veri çok katmanlı geldiyse tek boyuta indirge
+# Çok katmanlı index yapısını tek boyuta indirge
 if isinstance(data, pd.DataFrame):
     data = data.iloc[:, 0]
 
@@ -34,17 +32,27 @@ df = pd.DataFrame({'Close': data})
 df['Return'] = df['Close'].pct_change()
 df['Signal_Target'] = (df['Return'].shift(-1) > 0).astype(int) # Yarın fiyat artacak mı?
 df.dropna(inplace=True)
+
+# 4. Arka Plan: Makine Öğrenimi Giriş ve Çıkış Değişkenleri (Eksik olan kısım)
+X = df[['Return']] 
 y = df['Signal_Target']
 
-model = RandomForestClassifier()
-model.fit(X[:int(len(X)*(train_size/100))], y[:int(len(y)*(train_size/100))])
+# 5. Arka Plan: Makine Öğrenimi Modeli Eğitme
+model = RandomForestClassifier(random_state=42)
+split_index = int(len(X) * (train_size / 100))
+
+model.fit(X[:split_index], y[:split_index])
 df['Predicted_Signal'] = model.predict(X)
 
-# 5. Arka Plan: Vectorbt ile Backtest
-# Model 1 (Al) ürettiğinde pozisyona gir, 0 ürettiğinde nakte geç
-portfolio = vbt.Portfolio.from_signals(df['Close'], entries=(df['Predicted_Signal'] == 1), exits=(df['Predicted_Signal'] == 0))
+# 6. Arka Plan: Vectorbt ile Backtest Simülasyonu
+portfolio = vbt.Portfolio.from_signals(
+    df['Close'], 
+    entries=(df['Predicted_Signal'] == 1), 
+    exits=(df['Predicted_Signal'] == 0),
+    fees=0.001 # %0.1 borsa komisyonu eklendi
+)
 
-# 6. Ön Yüz: Sonuçları Web Sitesine Basma
+# 7. Ön Yüz: Sonuçları Web Sitesine Basma
 col1, col2 = st.columns(2)
 with col1:
     st.write("#### Fiyat Grafiği")
