@@ -5,7 +5,6 @@ import plotly.graph_objects as go
 import requests
 import io
 import ccxt
-import traceback
 
 # 1. Sayfa Konfigürasyonu
 st.set_page_config(layout="wide", page_title="Yapay Zeka Çoklu Otomasyon Paneli")
@@ -51,6 +50,7 @@ def get_crypto_data(symbol_name, prd_days, inv_str):
 # --- 3. PANDAS BACKTEST MATEMATİK MOTORU ---
 def compute_strategy_performance(df_input, train_ratio):
     try:
+        from sklearn.ensemble import RandomForestClassifier
         working_df = df_input.copy()
         working_df['Return'] = working_df['Close'].pct_change()
         working_df['RSI'] = vbt.RSI.run(working_df['Close'], window=14).rsi
@@ -115,8 +115,7 @@ def compute_strategy_performance(df_input, train_ratio):
         latest_signal_out = int(working_df['Predicted_Signal'].iloc[-1])
 
         return working_df, total_ret_pct, final_val, pd.DataFrame(trade_logs), latest_signal_out
-    except Exception as e:
-        st.session_state.global_trade_history.append(f"⚠️ Performans Motoru Hatası: {str(e)}")
+    except:
         return None, 0.0, 10000.0, pd.DataFrame(), 0
 
 # --- 4. GRAFİK OLUŞTURMA FONKSİYONU ---
@@ -149,8 +148,8 @@ def process_live_alarms(b_token, c_id):
         try:
             res = compute_strategy_performance(alarm_raw, 80)
             if res[0] is not None:
+                a_proc, _, _, _, a_signal = res
                 a_price = float(alarm_raw['Close'].iloc[-1])
-                a_signal = int(res[4])
                 alarm["last_price"] = a_price
                 if alarm["last_signal"] != a_signal:
                     action = ""
@@ -168,8 +167,8 @@ def process_live_alarms(b_token, c_id):
                         msg = f"⚡ *MEXC ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
                         send_telegram_signal(b_token, c_id, msg)
                         st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
-        except Exception as alarm_err:
-            st.session_state.global_trade_history.append(f"⚠️ Alarm İşleme Hatası ({alarm['ticker']}): {str(alarm_err)}")
+        except:
+            pass
 
 # --- 6. ARAYÜZ BİLEŞENLERİ PANELİ ---
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
@@ -189,6 +188,8 @@ ticker = st.sidebar.selectbox("Kripto Para Seçin (MEXC Canlı)", crypto_list)
 interval_label = st.sidebar.selectbox("Veri Sıklığı (Grafik Mum Tipi)", ["1 Saat", "1 Gün"])
 
 interval_mapping = {"1 Saat": "1h", "1 Gün": "1d"}
+period_mapping = {"7 Gün": "7d", "30 Gün": "30d", "2 Ay": "2mo", "1 Yıl": "1y", "3 Yıl": "3y"}
+
 time_period = st.sidebar.selectbox("Geçmiş Test Süresi", ["7 Gün", "30 Gün", "2 Ay", "1 Yıl", "3 Yıl"], index=3)
 train_size = st.sidebar.slider("Yapay Zeka Eğitim Verisi Oranı (%)", 50, 90, 80)
 
@@ -204,15 +205,18 @@ if st.sidebar.button("🚨 SEÇİLİ COİNİ ALARMLARA EKLE", use_container_widt
     st.session_state.alarms.append(new_alarm)
     st.sidebar.success(f"Başarılı! {ticker} MEXC alarm havuzuna eklendi.")
 
-# --- SEKMELİ ÖN YÜZ HIERARŞİSİ ---
+# --- SEKMELİ ÖN YÜZ TANIMLAMASI ---
 tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
 
-# --- VERİ VE STRATEJİ AKIŞ YÖNETİMİ (TAMAMEN DOĞRUSAL, GİRİNTİSİZ) ---
+# --- VERİ VE STRATEJİ AKIŞI (HİZALAMA KİLİTLENMESİNİ ÖNLEYEN YENİ NESİL YALIN YAPI) ---
 raw_df = get_crypto_data(ticker, time_period, interval_mapping[interval_label])
 
-# ÖN YÜZ ÇİZİM KATMANLARI (Asla try bloğu içine alınmaz, çökme ihtimali sıfırdır)
-if raw_df.empty:
+# Hata yakalama ve canlandırma katmanı
+if raw_df.empty or len(raw_df) < 10:
     with tab1:
-        st.error("❌ MEXC Borsasından veri çekilemedi. Lütfen sol panelden zaman aralığı ayarlarını değiştirin veya sayfayı yenileyin.")
+        st.warning("⚠️ MEXC sunucularından anlık veri çekilemedi. Lütfen sayfayı yenileyin veya yan panelden farklı bir zaman dilimi seçin.")
 else:
-    # Hesaplama Tetikleme
+    processed_df, total_net_return_pct, final_wallet_value, backtest_logs, latest_signal = compute_strategy_performance(raw_df, train_size)
+    process_live_alarms(bot_token, chat_id)
+
+    with tab1:
