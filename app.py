@@ -19,7 +19,7 @@ if "global_trade_history" not in st.session_state:
 # --- FONKSİYON 1: TELEGRAM SİNYAL GÖNDERME ---
 def send_telegram_signal(token, chat_id, message):
     try:
-        url = f"https://telegram.org{token}/sendMessage"
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
         response = requests.post(url, json=payload, timeout=5)
         return response.status_code == 200
@@ -139,7 +139,6 @@ raw_df = get_crypto_data(symbol, period_mapping[time_period], interval_mapping[i
 if raw_df.empty or len(raw_df) < 20:
     st.error("Seçili zaman aralığında borsa verisi yüklenemedi. Lütfen yan panelden zaman ayarlarını değiştirin.")
 else:
-    # Fonksiyonu Çağırarak Güvenli Hesaplama Yapma
     processed_df, portfolio, model_obj = run_ml_and_backtest(raw_df, train_size)
     
     if processed_df is None:
@@ -154,30 +153,33 @@ else:
             alarm_raw = get_crypto_data(alm_symbol, period_mapping[alarm["period"]], interval_mapping[alarm["interval"]])
             
             if not alarm_raw.empty and len(alarm_raw) > 20:
-                a_proc, a_port, _ = run_ml_and_backtest(alarm_raw, 80)
-                if a_proc is not None:
-                    a_price = float(a_proc['Close'].iloc[-1])
-                    a_signal = int(a_proc['Predicted_Signal'].iloc[-1])
-                    alarm["last_price"] = a_price
-                    
-                    if alarm["last_signal"] != a_signal:
-                        action = ""
-                        if a_signal == 1 and alarm["balance"] > 0:
-                            alarm["crypto_amount"] = alarm["balance"] / a_price
-                            action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
-                            alarm["balance"] = 0.0
-                        elif a_signal == 0 and alarm["crypto_amount"] > 0:
-                            alarm["balance"] = alarm["crypto_amount"] * a_price
-                            action = f"🔴 SATIM YAPILDI: Nakte geçildi."
-                            alarm["crypto_amount"] = 0.0
-                            
-                        alarm["last_signal"] = a_signal
+                try:
+                    a_proc, a_port, _ = run_ml_and_backtest(alarm_raw, 80)
+                    if a_proc is not None:
+                        a_price = float(a_proc['Close'].iloc[-1])
+                        a_signal = int(a_proc['Predicted_Signal'].iloc[-1])
+                        alarm["last_price"] = a_price
                         
-                        if action and bot_token and chat_id:
-                            cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
-                            msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
-                            send_telegram_signal(bot_token, chat_id, msg)
-                            st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
+                        if alarm["last_signal"] != a_signal:
+                            action = ""
+                            if a_signal == 1 and alarm["balance"] > 0:
+                                alarm["crypto_amount"] = alarm["balance"] / a_price
+                                action = f"🟢 ALIM YAPILDI: {alarm['crypto_amount']:.4f} adet."
+                                alarm["balance"] = 0.0
+                            elif a_signal == 0 and alarm["crypto_amount"] > 0:
+                                alarm["balance"] = alarm["crypto_amount"] * a_price
+                                action = f"🔴 SATIM YAPILDI: Nakte geçildi."
+                                alarm["crypto_amount"] = 0.0
+                            
+                            alarm["last_signal"] = a_signal
+                            
+                            if action and bot_token and chat_id:
+                                cur_val = alarm["balance"] if alarm["balance"] > 0 else (alarm["crypto_amount"] * a_price)
+                                msg = f"⚡ *ALARM:* {alarm['ticker']} ({alarm['interval']})\n👉 {action}\n💰 Güncel Kasa: ${cur_val:,.2f}"
+                                send_telegram_signal(bot_token, chat_id, msg)
+                                st.session_state.global_trade_history.append(f"[{alarm['ticker']}] {action} | Kasa: ${cur_val:,.2f}")
+                except Exception:
+                    pass
 
         # --- SEKMELİ ÖN YÜZ TASARIMI ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Gelişmiş Backtest Alanı", "🚨 2. Canlı Alarm Havuzu & Excel", "🕒 3. Global İşlem Günlüğü"])
@@ -209,8 +211,6 @@ else:
             try:
                 trades_df = portfolio.trades.records_df
                 if not trades_df.empty:
-                    # Tarih dökümlerini güvenli serilere atama
                     entry_dates = processed_df.index[trades_df['entry_idx']]
                     exit_dates = processed_df.index[trades_df['exit_idx']]
                     
-                    backtest_logs = pd.DataFrame()
