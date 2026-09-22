@@ -26,7 +26,7 @@ def send_telegram_signal(token, chat_id, message):
     except Exception:
         return False
 
-# 2. Yan Panel (Sidebar) - Kullanıcı Seçimleri ver Zaman Ayarları
+# 2. Yan Panel (Sidebar) - Kullanıcı Seçimleri ve Zaman Ayarları
 st.sidebar.header("⚙️ 1. Telegram Bağlantı Ayarları")
 bot_token = st.sidebar.text_input("Telegram Bot Token", type="password", help="BotFather'dan aldığınız token")
 chat_id = st.sidebar.text_input("Telegram Chat ID", type="password", help="Userinfo botundan aldığınız ID")
@@ -208,7 +208,7 @@ try:
             
             st.markdown("---")
             
-            # --- DÜZELTİLMİŞ VE HİZALANMIŞ TABLO RAPORLAMA KATMANI ---
+            # --- TAMAMEN HİZALANMIŞ TABLO RAPORMA KATMANI ---
             report_data = []
             for a in st.session_state.alarms:
                 calculated_balance = a['balance'] if a['balance'] > 0 else (a['crypto_amount'] * a['last_price'])
